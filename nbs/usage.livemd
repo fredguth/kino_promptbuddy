@@ -23,26 +23,17 @@ smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
 import Kino.Shorts
 outer = frame()
 body = frame()
-
-chat_history =
-  (fn -> Kino.PromptBuddy |> :erlang.apply(:get_history, [current_cell_id]) end).()
-
-previous_msgs =
-  chat_history
-  |> Enum.flat_map(fn {u, a} ->
-    [
-      Kino.Markdown.new("**Buddy**: #{a}"),
-      Kino.Markdown.new("---"),
-      Kino.Markdown.new("**You**: #{u}")
-    ]
-  end)
-
-current_prompt = Kino.Markdown.new("**You**: #{user_text}")
+chat_history = Kino.PromptBuddy.get_history(current_cell_id)
+previous_msgs = Kino.PromptBuddy.history_markdown(chat_history)
+current_prompt_header = Kino.Markdown.new("**You**:")
+current_prompt_body = Kino.Markdown.new(user_text)
 buddy_header = Kino.Markdown.new("**Buddy**:")
 
 Kino.Frame.render(
   outer,
-  Kino.Layout.grid(previous_msgs ++ [current_prompt, buddy_header, body])
+  Kino.Layout.grid(
+    previous_msgs ++ [current_prompt_header, current_prompt_body, buddy_header, body]
+  )
 )
 
 Task.start(fn ->
@@ -69,25 +60,20 @@ precedent_msgs =
     _ -> []
   end
 
-history_msgs =
-  (fn -> Kino.PromptBuddy |> :erlang.apply(:history_to_messages, [chat_history]) end).()
-
+history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
 messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
 
 Task.start(fn ->
-  (fn ->
-     Kino.PromptBuddy
-     |> :erlang.apply(:stream_response_and_update_history, [
-       model,
-       messages,
-       body,
-       outer,
-       user_text,
-       chat_history,
-       current_cell_id,
-       n_every
-     ])
-   end).()
+  Kino.PromptBuddy.stream_response_and_update_history(
+    model,
+    messages,
+    body,
+    outer,
+    user_text,
+    chat_history,
+    current_cell_id,
+    n_every
+  )
 end)
 
 outer
@@ -95,11 +81,11 @@ outer
 
 My name is Fred
 
-<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtaGFpa3UtNC41Iiwibl9ldmVyeSI6MjQsInNlc3Npb25faWQiOiIzNTZtZGd0Z2xla2RpYnhwaWN4Z3BnZDQ1aWxhM250aTN2a3ByNGo2aTZ4bzc2NHIiLCJzb3VyY2UiOiIifQ","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQuNSIsIm5fZXZlcnkiOjI0LCJzZXNzaW9uX2lkIjoiMzU2bWRndGdsZWtkaWJ4cGljeGdwZ2Q0NWlsYTNudGkzdmtwcjRqNmk2eG83NjRyIiwic291cmNlIjoiIn0","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
 
 ```elixir
 alias Kino.PromptBuddy.Context
-model = "openrouter:anthropic/claude-haiku-4.5"
+model = "openrouter:anthropic/claude-sonnet-4.5"
 n_every = 24
 session_id = "356mdgtglekdibxpicxgpgd45ila3nti3vkpr4j6i6xo764r"
 current_cell_id = Context.get_current_cell_id()
@@ -108,26 +94,17 @@ smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
 import Kino.Shorts
 outer = frame()
 body = frame()
-
-chat_history =
-  (fn -> Kino.PromptBuddy |> :erlang.apply(:get_history, [current_cell_id]) end).()
-
-previous_msgs =
-  chat_history
-  |> Enum.flat_map(fn {u, a} ->
-    [
-      Kino.Markdown.new("**Buddy**: #{a}"),
-      Kino.Markdown.new("---"),
-      Kino.Markdown.new("**You**: #{u}")
-    ]
-  end)
-
-current_prompt = Kino.Markdown.new("**You**: #{user_text}")
+chat_history = Kino.PromptBuddy.get_history(current_cell_id)
+previous_msgs = Kino.PromptBuddy.history_markdown(chat_history)
+current_prompt_header = Kino.Markdown.new("**You**:")
+current_prompt_body = Kino.Markdown.new(user_text)
 buddy_header = Kino.Markdown.new("**Buddy**:")
 
 Kino.Frame.render(
   outer,
-  Kino.Layout.grid(previous_msgs ++ [current_prompt, buddy_header, body])
+  Kino.Layout.grid(
+    previous_msgs ++ [current_prompt_header, current_prompt_body, buddy_header, body]
+  )
 )
 
 Task.start(fn ->
@@ -154,28 +131,23 @@ precedent_msgs =
     _ -> []
   end
 
-history_msgs =
-  (fn -> Kino.PromptBuddy |> :erlang.apply(:history_to_messages, [chat_history]) end).()
-
+history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
 messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
 
 Task.start(fn ->
-  (fn ->
-     Kino.PromptBuddy
-     |> :erlang.apply(:stream_response_and_update_history, [
-       model,
-       messages,
-       body,
-       outer,
-       user_text,
-       chat_history,
-       current_cell_id,
-       n_every
-     ])
-   end).()
+  Kino.PromptBuddy.stream_response_and_update_history(
+    model,
+    messages,
+    body,
+    outer,
+    user_text,
+    chat_history,
+    current_cell_id,
+    n_every
+  )
 end)
 
 outer
 ```
 
-<!-- livebook:{"offset":4706,"stamp":{"token":"XCP.smGTMJO0mdRqk1DUAYhZWnnLmUtm9i9m26qu1UZh0O12dTb5o4FhwDq_eWPitFVDQbl3BsoGPk_XKg8Gor-1vI8OnrhIJ7OpU390tRPeo3hVhLZFKNgFDI5XeAN5","version":2}} -->
+<!-- livebook:{"offset":4288,"stamp":{"token":"XCP.RpW4XJNxeQLkbSSF4Gf2hHu2SLRSdS9KdpVptLefu6ZT5QLAXI-b4_y6DH764XaHmVpkpkUuIGW88uUa7CDwnr7G82QRgC02Eg2MrZDXIgh8wcAHLLkAcZ1Eq8R7","version":2}} -->

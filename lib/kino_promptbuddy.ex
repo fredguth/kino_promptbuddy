@@ -10,12 +10,13 @@ defmodule Kino.PromptBuddy do
   # -- Public API --------------------------------------------------------------
 
   def new(), do: Kino.JS.Live.new(__MODULE__, %{})
+
   def history_to_messages(history) do
     Enum.flat_map(history, fn
       {u, a} -> [ReqLLM.Context.user(u), ReqLLM.Context.assistant(a)]
-      # Extend here if you later store tool/system messages
     end)
   end
+
   def get_history(cell_id) do
     :persistent_term.get(history_key(cell_id), [])
   end
@@ -24,12 +25,7 @@ defmodule Kino.PromptBuddy do
     :persistent_term.put(history_key(cell_id), history)
   end
 
-
-  # -- Per-cell chat history ---------------------------------------------------
-
-  defp history_key(cell_id), do: {:promptbuddy, cell_id}
-
-
+  def history_key(cell_id), do: {:promptbuddy, cell_id}
 
   # -- Live callbacks ----------------------------------------------------------
 
@@ -37,9 +33,6 @@ defmodule Kino.PromptBuddy do
   def init(attrs, ctx) do
     ReqLLM.put_key(:openrouter_api_key, System.get_env("LB_OPENROUTER_API_KEY"))
     source = attrs["source"] || ""
-
-    # Get the cell_id - use the one from attrs if available (for persistence),
-    # otherwise generate it now using Context.get_current_cell_id()
     cell_id = attrs["cell_id"] || Context.get_current_cell_id()
 
     # Register this Smart Cell process so generated code can find it
@@ -59,8 +52,7 @@ defmodule Kino.PromptBuddy do
        model: attrs["model"] || "openrouter:anthropic/claude-sonnet-4.5",
        n_every: attrs["n_every"] || 24,
        cell_id: cell_id
-     ),
-     editor: [source: source, language: "markdown", placement: :top]}
+     ), editor: [source: source, language: "markdown", placement: :top]}
   end
 
   defp smart_cell_name(cell_id), do: :"promptbuddy_#{cell_id}"
@@ -81,6 +73,7 @@ defmodule Kino.PromptBuddy do
 
   @impl true
   def handle_event("set_session_id", session_url, ctx) do
+    # front end is the place where we ca find the session id (in the url)
     session_id =
       case Regex.run(~r{/sessions/([^/]+)/}, session_url) do
         [_, id] -> id
@@ -90,50 +83,18 @@ defmodule Kino.PromptBuddy do
     {:noreply, assign(ctx, session_id: session_id)}
   end
 
-  # @impl true
-  # def handle_event("set_cell_id", new_id, ctx) do
-  #   old_id = ctx.assigns[:cell_id]
-
-  #   cond do
-  #     is_nil(new_id) or new_id == "" ->
-  #       {:noreply, ctx}
-
-  #     new_id == old_id ->
-  #       {:noreply, ctx}
-
-  #     true ->
-  #       migrate_history(old_id, new_id)
-  #       reregister_process(old_id, new_id)
-  #       {:noreply, assign(ctx, cell_id: new_id)}
-  #   end
-  # end
-
   @impl true
   def handle_event("update_model", model_key, ctx) do
     model =
       case model_key do
         "sonnet" -> "openrouter:anthropic/claude-sonnet-4.5"
-        "haiku"  -> "openrouter:anthropic/claude-haiku-4.5"
-        "opus"   -> "openrouter:anthropic/claude-opus-4.1"
-        _        -> "openrouter:anthropic/claude-sonnet-4.5"
+        "haiku" -> "openrouter:anthropic/claude-haiku-4.5"
+        "opus" -> "openrouter:anthropic/claude-opus-4.1"
+        _ -> "openrouter:anthropic/claude-sonnet-4.5"
       end
 
     {:noreply, assign(ctx, model: model)}
   end
-
-  # @impl true
-  # def handle_event("clear_source", _payload, ctx) do
-  #   ctx =
-  #     ctx
-  #     |> assign(source: "")
-  #     |> Kino.JS.Live.Context.reconfigure_smart_cell(editor: [source: ""])
-
-  #   Kino.JS.Live.Context.broadcast_event(ctx, "focus_editor", %{})
-
-  #   {:noreply, ctx}
-  # end
-
-
 
   @impl true
   def handle_info({:clear_editor, cell_id}, ctx) do
@@ -151,10 +112,18 @@ defmodule Kino.PromptBuddy do
   def handle_call(:get_session_id, _from, ctx),
     do: {:reply, ctx.assigns[:session_id], ctx}
 
-
   # -- Helper functions for to_source ------------------------------------------
 
-  def stream_response_and_update_history(model, messages, body, outer, user_text, chat_history, current_cell_id, n_every) do
+  def stream_response_and_update_history(
+        model,
+        messages,
+        body,
+        outer,
+        user_text,
+        chat_history,
+        current_cell_id,
+        n_every
+      ) do
     case ReqLLM.stream_text(model, messages) do
       {:ok, response} ->
         final_text = handle_streaming_response(response, body, n_every)
@@ -173,9 +142,11 @@ defmodule Kino.PromptBuddy do
       |> ReqLLM.StreamResponse.tokens()
       |> Enum.reduce({"", 0}, fn token, {acc, n} ->
         new_text = acc <> token
+
         if rem(n + 1, n_every) == 0 do
           Kino.Frame.render(body, Kino.Markdown.new(new_text))
         end
+
         {new_text, n + 1}
       end)
 
@@ -183,26 +154,25 @@ defmodule Kino.PromptBuddy do
   end
 
   def update_chat_history(current_cell_id, new_history) do
-    (fn -> Kino.PromptBuddy |> :erlang.apply(:put_history, [current_cell_id, new_history]) end).()
+    put_history(current_cell_id, new_history)
+  end
+
+  def history_markdown(chat_history) do
+    Enum.flat_map(chat_history, fn {u, a} ->
+      [
+        Kino.Markdown.new("**Buddy**:"),
+        Kino.Markdown.new(a),
+        Kino.Markdown.new("---"),
+        Kino.Markdown.new("**You**:"),
+        Kino.Markdown.new(u),
+        Kino.Markdown.new("---")
+      ]
+    end)
   end
 
   def render_final_chat_history(outer, new_history) do
-    all_msgs =
-      new_history
-      |> Enum.flat_map(fn {u, a} ->
-        [
-          Kino.Markdown.new("**Buddy**:"),
-          Kino.Markdown.new("#{a}"),
-          Kino.Markdown.new("---"),
-          Kino.Markdown.new("**You**:"),
-          Kino.Markdown.new("#{u}"),
-          Kino.Markdown.new("---"),
-        ]
-      end)
-
-    Kino.Frame.render(outer, Kino.Layout.grid(all_msgs))
+    Kino.Frame.render(outer, Kino.Layout.grid(history_markdown(new_history)))
   end
-
 
   # -------------------------------------------------------------
 
@@ -214,43 +184,37 @@ defmodule Kino.PromptBuddy do
       # ---------- PromptBuddy UI (auto-generated by SmartCell) ----------
       alias Kino.PromptBuddy.Context
 
-      model           = unquote(attrs["model"])
-      n_every         = unquote(attrs["n_every"])
-      session_id      = unquote(attrs["session_id"])
+      model = unquote(attrs["model"])
+      n_every = unquote(attrs["n_every"])
+      session_id = unquote(attrs["session_id"])
       current_cell_id = Context.get_current_cell_id()
-      user_text       = unquote(attrs["source"])
-      smart_cell_pid  = Process.whereis(:"promptbuddy_#{unquote(cell_id)}")
+      user_text = unquote(attrs["source"])
+      smart_cell_pid = Process.whereis(:"promptbuddy_#{unquote(cell_id)}")
 
       import Kino.Shorts
       outer = frame()
-      body  = frame()
+      body = frame()
 
-      chat_history =
-        (fn -> Kino.PromptBuddy |> :erlang.apply(:get_history, [current_cell_id]) end).()
+      chat_history = Kino.PromptBuddy.get_history(current_cell_id)
 
-      # Show all previous messages plus current prompt
-      previous_msgs =
-        chat_history
-        |> Enum.flat_map(fn {u, a} ->
-          [
-            Kino.Markdown.new("**Buddy**: #{a}"),
-            Kino.Markdown.new("---"),
-            Kino.Markdown.new("**You**: #{u}")
-          ]
-        end)
-
-      current_prompt = Kino.Markdown.new("**You**: #{user_text}")
+      previous_msgs = Kino.PromptBuddy.history_markdown(chat_history)
+      current_prompt_header = Kino.Markdown.new("**You**:")
+      current_prompt_body = Kino.Markdown.new(user_text)
       buddy_header = Kino.Markdown.new("**Buddy**:")
 
       # Render all previous messages plus current prompt and streaming area
       Kino.Frame.render(
         outer,
-        Kino.Layout.grid(previous_msgs ++ [current_prompt, buddy_header, body])
+        Kino.Layout.grid(
+          previous_msgs ++
+            [current_prompt_header, current_prompt_body, buddy_header, body]
+        )
       )
 
-      # Clear the editor after a small delay to ensure DOM is ready
+      # Clear the editor after render and a small delay
       Task.start(fn ->
         Process.sleep(100)
+
         if smart_cell_pid,
           do: send(smart_cell_pid, {:clear_editor, current_cell_id})
       end)
@@ -272,21 +236,26 @@ defmodule Kino.PromptBuddy do
         case Context.get_notebook(session_id) do
           {:ok, nb} ->
             Context.build_precedent_messages(nb, current_cell_id)
+
           _ ->
             []
         end
 
-      history_msgs =
-        (fn -> Kino.PromptBuddy |> :erlang.apply(:history_to_messages, [chat_history]) end).()
+      history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
 
       messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
 
       Task.start(fn ->
-        (fn ->
-          Kino.PromptBuddy
-          |> :erlang.apply(:stream_response_and_update_history,
-                          [model, messages, body, outer, user_text, chat_history, current_cell_id, n_every])
-        end).()
+        Kino.PromptBuddy.stream_response_and_update_history(
+          model,
+          messages,
+          body,
+          outer,
+          user_text,
+          chat_history,
+          current_cell_id,
+          n_every
+        )
       end)
 
       outer
