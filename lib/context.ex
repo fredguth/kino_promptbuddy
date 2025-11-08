@@ -17,22 +17,21 @@ defmodule Kino.PromptBuddy.Context do
     end
   end
 
-  def evaluate_cell(session_id, cell_id)
-      when is_binary(session_id) and is_binary(cell_id) do
-    with {:ok, node_norm, session} <- fetch_session(session_id) do
-      case :erpc.call(
-             node_norm,
-             Livebook.Session,
-             :queue_cell_evaluation,
-             [session.pid, cell_id]
-           ) do
-        :ok -> :ok
-        other -> {:error, other}
-      end
-    end
-  end
+  # def evaluate_cell(session_id, cell_id)
+  #     when is_binary(session_id) and is_binary(cell_id) do
+  #   with {:ok, node_norm, session} <- fetch_session(session_id) do
+  #     case :erpc.call(
+  #            node_norm,
+  #            Livebook.Session,
+  #            :queue_cell_evaluation,
+  #            [session.pid, cell_id]
+  #          ) do
+  #       :ok -> :ok
+  #       other -> {:error, other}
+  #     end
+  #   end
+  # end
 
-  def evaluate_cell(_session_id, _cell_id), do: {:error, :invalid_identifiers}
 
   defp fetch_session(session_id) when is_binary(session_id) do
     node_norm = normalized_node()
