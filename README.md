@@ -28,6 +28,14 @@ Mix.install([
 ])
 ```
 
+If you want to track the latest commit from the repository directly, point Mix at GitHub:
+
+```elixir
+Mix.install([
+  {:kino_promptbuddy, github: "fredguth/kino_promptbuddy"}
+])
+```
+
 ## Configuration
 
 Before using PromptBuddy, you need to configure an API key for your LLM provider. The library uses [OpenRouter](https://openrouter.ai) by default.

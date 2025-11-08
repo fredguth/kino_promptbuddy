@@ -84,11 +84,11 @@ outer
 
 My name is Fred
 
-<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtaGFpa3UtNC41Iiwibl9ldmVyeSI6MjQsInNlc3Npb25faWQiOiIzNTZtZGd0Z2xla2RpYnhwaWN4Z3BnZDQ1aWxhM250aTN2a3ByNGo2aTZ4bzc2NHIiLCJzb3VyY2UiOiIifQ","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQuNSIsIm5fZXZlcnkiOjI0LCJzZXNzaW9uX2lkIjoiMzU2bWRndGdsZWtkaWJ4cGljeGdwZ2Q0NWlsYTNudGkzdmtwcjRqNmk2eG83NjRyIiwic291cmNlIjoiIn0","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
 
 ```elixir
 alias Kino.PromptBuddy.Context
-model = "openrouter:anthropic/claude-haiku-4.5"
+model = "openrouter:anthropic/claude-sonnet-4.5"
 n_every = 24
 session_id = "356mdgtglekdibxpicxgpgd45ila3nti3vkpr4j6i6xo764r"
 current_cell_id = Context.get_current_cell_id()
@@ -156,4 +156,4 @@ end
 outer
 ```
 
-<!-- livebook:{"offset":4552,"stamp":{"token":"XCP.Btez_PO3EI8o6FewJ3fClpgRmeg_dIxVTqETdCfvNHkiY_bIBBwqTo6XSlf6LFLMxwlbZgPxwDtWMQVTHeaEVHGHogun6YVA68WZjomThUF4G6AbblfPwgHyJZA4","version":2}} -->
+<!-- livebook:{"offset":4554,"stamp":{"token":"XCP.gZAmweSSHHZ_m1jh9TmjO9nvd4cNrMc8U84TeiyV279t2lPLL9NwMqaQIT8YvFQQY1hHQJcJ0AJSCzX5p36NPxIXieRyAw_ITTOD7ObyBBqyLejSM3jXjM9RKQqP","version":2}} -->
