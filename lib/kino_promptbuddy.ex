@@ -196,6 +196,7 @@ defmodule Kino.PromptBuddy do
       body = frame()
 
       chat_history = Kino.PromptBuddy.get_history(current_cell_id)
+      prompt_blank? = String.trim(user_text) == ""
 
       previous_msgs = Kino.PromptBuddy.history_markdown(chat_history)
       current_prompt_header = Kino.Markdown.new("**You**:")
@@ -211,52 +212,54 @@ defmodule Kino.PromptBuddy do
         )
       )
 
-      # Clear the editor after render and a small delay
-      Task.start(fn ->
-        Process.sleep(100)
+      unless prompt_blank? do
+        # Clear the editor after render and a small delay
+        Task.start(fn ->
+          Process.sleep(100)
 
-        if smart_cell_pid,
-          do: send(smart_cell_pid, {:clear_editor, current_cell_id})
-      end)
+          if smart_cell_pid,
+            do: send(smart_cell_pid, {:clear_editor, current_cell_id})
+        end)
 
-      system_msg =
-        ReqLLM.Context.system("""
-        You are a patient pair-programming partner using **Polya's method** / **Socratic** style.
-        PRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.
-        """)
+        system_msg =
+          ReqLLM.Context.system("""
+          You are a patient pair-programming partner using **Polya's method** / **Socratic** style.
+          PRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.
+          """)
 
-      prompt_msg =
-        ReqLLM.Context.user("""
-        --- BEGIN PROMPT ---
-        #{user_text}
-        --- END PROMPT ---
-        """)
+        prompt_msg =
+          ReqLLM.Context.user("""
+          --- BEGIN PROMPT ---
+          #{user_text}
+          --- END PROMPT ---
+          """)
 
-      precedent_msgs =
-        case Context.get_notebook(session_id) do
-          {:ok, nb} ->
-            Context.build_precedent_messages(nb, current_cell_id)
+        precedent_msgs =
+          case Context.get_notebook(session_id) do
+            {:ok, nb} ->
+              Context.build_precedent_messages(nb, current_cell_id)
 
-          _ ->
-            []
-        end
+            _ ->
+              []
+          end
 
-      history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
+        history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
 
-      messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+        messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
 
-      Task.start(fn ->
-        Kino.PromptBuddy.stream_response_and_update_history(
-          model,
-          messages,
-          body,
-          outer,
-          user_text,
-          chat_history,
-          current_cell_id,
-          n_every
-        )
-      end)
+        Task.start(fn ->
+          Kino.PromptBuddy.stream_response_and_update_history(
+            model,
+            messages,
+            body,
+            outer,
+            user_text,
+            chat_history,
+            current_cell_id,
+            n_every
+          )
+        end)
+      end
 
       outer
       # ---------- /PromptBuddy UI ----------
