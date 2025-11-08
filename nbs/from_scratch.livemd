@@ -10,6 +10,10 @@ Mix.install([
 
 ## Goal
 
+[![Run in Livebook](https://livebook.dev/badge/v1.svg)](https://livebook.dev/run?url=https://raw.githubusercontent.com/fredguth/kino_promptbuddy/refs/heads/main/nbs/from_scratch.livemd)
+
+<!-- livebook:{"break_markdown":true} -->
+
 We want to allow a user *pair program* with an LLM, keeping a conversation about the notebook they are actively creating. This idea took inspiration from [Jeremy Howard's](https://en.wikipedia.org/wiki/Jeremy_Howard_(entrepreneur)) [Solve.it](https://solve.it.com/?via_id=u0nb5yov), an app and methodology designed to augment human capabilities with AI (and a refreshing alternative to the mind numbing nature of of vibe coding). The SolveIt app is Python-based,  and I have been really enjoying the method, but wanted to bring it to Elixir where I also code with notebooks.
 
 (*The [link](https://solve.it.com/?via_id=u0nb5yov) above includes a 15% discount if you’d like to enroll in the SolveIt course.*)
@@ -1194,5 +1198,3 @@ api_result = ExDuck.query!("Who was Santos Dumont?")
 answer = api_result |> ExDuck.understand()
 answer |> ExDuck.to_markdown() |> Kino.Markdown.new()
 ```
-
-<!-- livebook:{"offset":33900,"stamp":{"token":"XCP.9z0-iTaU1u-L5Z6qGBu9en0aPX9cSjlg-2qDHfS2N6wlplvu6x-8J1A05E3HqM19WfxnD8BuynTI2AlqID9thRN1XZbI4fKatO4WBQ9Ml_YzTX6voXb-hia1S4EA","version":2}} -->

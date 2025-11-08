@@ -1,4 +1,4 @@
-# Usage Kino PromptBuddy
+# Using PromptBuddy
 
 ```elixir
 Mix.install([
@@ -84,6 +84,8 @@ outer
 
 My name is Fred
 
+## Now Buddy knows my name
+
 <!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQuNSIsIm5fZXZlcnkiOjI0LCJzZXNzaW9uX2lkIjoiMzU2bWRndGdsZWtkaWJ4cGljeGdwZ2Q0NWlsYTNudGkzdmtwcjRqNmk2eG83NjRyIiwic291cmNlIjoiIn0","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
 
 ```elixir
@@ -156,4 +158,4 @@ end
 outer
 ```
 
-<!-- livebook:{"offset":4554,"stamp":{"token":"XCP.gZAmweSSHHZ_m1jh9TmjO9nvd4cNrMc8U84TeiyV279t2lPLL9NwMqaQIT8YvFQQY1hHQJcJ0AJSCzX5p36NPxIXieRyAw_ITTOD7ObyBBqyLejSM3jXjM9RKQqP","version":2}} -->
+<!-- livebook:{"offset":4577,"stamp":{"token":"XCP.DTp7LIpgb-uWMxvF-g_GmMS7n1xL1--Ol3zFi9UBEPfHPiiGafET8RrQTbIN7e_Ir2mP-q5tl1uiZHTIGO2M4_iJ3_1jnh2kQHnK0UVXfWWarAwfz2XRgUicB7Km","version":2}} -->
