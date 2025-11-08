@@ -51,7 +51,6 @@ defmodule Kino.PromptBuddy do
     end
 
     Process.register(self(), smart_cell_name(cell_id))
-    IO.puts("[PromptBuddy] Registered as #{inspect(smart_cell_name(cell_id))}")
 
     {:ok,
      assign(ctx,
@@ -68,8 +67,6 @@ defmodule Kino.PromptBuddy do
 
   @impl true
   def handle_connect(ctx) do
-    IO.puts("[PromptBuddy] handle_connect: cell_id=#{inspect(ctx.assigns[:cell_id])}")
-
     {:ok,
      %{
        session_id: ctx.assigns[:session_id],
@@ -93,23 +90,23 @@ defmodule Kino.PromptBuddy do
     {:noreply, assign(ctx, session_id: session_id)}
   end
 
-  @impl true
-  def handle_event("set_cell_id", new_id, ctx) do
-    old_id = ctx.assigns[:cell_id]
+  # @impl true
+  # def handle_event("set_cell_id", new_id, ctx) do
+  #   old_id = ctx.assigns[:cell_id]
 
-    cond do
-      is_nil(new_id) or new_id == "" ->
-        {:noreply, ctx}
+  #   cond do
+  #     is_nil(new_id) or new_id == "" ->
+  #       {:noreply, ctx}
 
-      new_id == old_id ->
-        {:noreply, ctx}
+  #     new_id == old_id ->
+  #       {:noreply, ctx}
 
-      true ->
-        migrate_history(old_id, new_id)
-        reregister_process(old_id, new_id)
-        {:noreply, assign(ctx, cell_id: new_id)}
-    end
-  end
+  #     true ->
+  #       migrate_history(old_id, new_id)
+  #       reregister_process(old_id, new_id)
+  #       {:noreply, assign(ctx, cell_id: new_id)}
+  #   end
+  # end
 
   @impl true
   def handle_event("update_model", model_key, ctx) do
@@ -124,24 +121,22 @@ defmodule Kino.PromptBuddy do
     {:noreply, assign(ctx, model: model)}
   end
 
-  @impl true
-  def handle_event("clear_source", _payload, ctx) do
-    ctx =
-      ctx
-      |> assign(source: "")
-      |> Kino.JS.Live.Context.reconfigure_smart_cell(editor: [source: ""])
+  # @impl true
+  # def handle_event("clear_source", _payload, ctx) do
+  #   ctx =
+  #     ctx
+  #     |> assign(source: "")
+  #     |> Kino.JS.Live.Context.reconfigure_smart_cell(editor: [source: ""])
 
-    Kino.JS.Live.Context.broadcast_event(ctx, "focus_editor", %{})
+  #   Kino.JS.Live.Context.broadcast_event(ctx, "focus_editor", %{})
 
-    {:noreply, ctx}
-  end
+  #   {:noreply, ctx}
+  # end
 
 
 
   @impl true
   def handle_info({:clear_editor, cell_id}, ctx) do
-    IO.puts("[PromptBuddy] Received :clear_editor message for cell_id: #{inspect(cell_id)}")
-
     ctx =
       ctx
       |> assign(source: "")
@@ -155,32 +150,6 @@ defmodule Kino.PromptBuddy do
   @impl true
   def handle_call(:get_session_id, _from, ctx),
     do: {:reply, ctx.assigns[:session_id], ctx}
-
-  defp migrate_history(nil, _new_id), do: :ok
-  defp migrate_history(_old_id, nil), do: :ok
-  defp migrate_history(old_id, new_id) when old_id == new_id, do: :ok
-  defp migrate_history(old_id, new_id) do
-    history = get_history(old_id)
-    put_history(new_id, history)
-  end
-
-  defp reregister_process(nil, new_id) do
-    Process.register(self(), smart_cell_name(new_id))
-  end
-
-  defp reregister_process(old_id, new_id) when old_id == new_id, do: :ok
-  defp reregister_process(old_id, new_id) do
-    try do
-      Process.unregister(smart_cell_name(old_id))
-    rescue
-      ArgumentError -> :ok
-    end
-
-    Process.register(self(), smart_cell_name(new_id))
-  end
-
-
-
 
 
   # -- Helper functions for to_source ------------------------------------------
@@ -282,14 +251,8 @@ defmodule Kino.PromptBuddy do
       # Clear the editor after a small delay to ensure DOM is ready
       Task.start(fn ->
         Process.sleep(100)
-        IO.puts("[PromptBuddy] smart_cell_pid = #{inspect(smart_cell_pid)}")
-        IO.puts("[PromptBuddy] current_cell_id = #{inspect(current_cell_id)}")
-        if smart_cell_pid do
-          IO.puts("[PromptBuddy] Sending :clear_editor to #{inspect(smart_cell_pid)}")
-          send(smart_cell_pid, {:clear_editor, current_cell_id})
-        else
-          IO.puts("[PromptBuddy] No smart_cell_pid found")
-        end
+        if smart_cell_pid,
+          do: send(smart_cell_pid, {:clear_editor, current_cell_id})
       end)
 
       system_msg =

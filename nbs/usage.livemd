@@ -47,14 +47,9 @@ Kino.Frame.render(
 
 Task.start(fn ->
   Process.sleep(100)
-  IO.puts("[PromptBuddy] smart_cell_pid = #{inspect(smart_cell_pid)}")
-  IO.puts("[PromptBuddy] current_cell_id = #{inspect(current_cell_id)}")
 
   if smart_cell_pid do
-    IO.puts("[PromptBuddy] Sending :clear_editor to #{inspect(smart_cell_pid)}")
     send(smart_cell_pid, {:clear_editor, current_cell_id})
-  else
-    IO.puts("[PromptBuddy] No smart_cell_pid found")
   end
 end)
 
@@ -137,14 +132,9 @@ Kino.Frame.render(
 
 Task.start(fn ->
   Process.sleep(100)
-  IO.puts("[PromptBuddy] smart_cell_pid = #{inspect(smart_cell_pid)}")
-  IO.puts("[PromptBuddy] current_cell_id = #{inspect(current_cell_id)}")
 
   if smart_cell_pid do
-    IO.puts("[PromptBuddy] Sending :clear_editor to #{inspect(smart_cell_pid)}")
     send(smart_cell_pid, {:clear_editor, current_cell_id})
-  else
-    IO.puts("[PromptBuddy] No smart_cell_pid found")
   end
 end)
 
@@ -188,4 +178,4 @@ end)
 outer
 ```
 
-<!-- livebook:{"offset":5276,"stamp":{"token":"XCP.CibOVm2sZG3yaX4vTgWKzdTaMppw7sKlcIyGnvA-61Gky6JsWfK2IE-12McfgJOXYWcnPrXpSWTTCYZ5yhjcVuYkWMOjd1LCme_Nnre1Et65xmy-CUdiyeUKRNU8","version":2}} -->
+<!-- livebook:{"offset":4706,"stamp":{"token":"XCP.smGTMJO0mdRqk1DUAYhZWnnLmUtm9i9m26qu1UZh0O12dTb5o4FhwDq_eWPitFVDQbl3BsoGPk_XKg8Gor-1vI8OnrhIJ7OpU390tRPeo3hVhLZFKNgFDI5XeAN5","version":2}} -->
