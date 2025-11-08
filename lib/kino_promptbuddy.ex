@@ -136,24 +136,7 @@ defmodule Kino.PromptBuddy do
     {:noreply, ctx}
   end
 
-  @impl true
-  def handle_event("evaluate_cell", payload, ctx) do
-    IO.puts("[PromptBuddy] Evaluate Cell")
-    cell_id = Map.get(payload, "cell_id") || ctx.assigns[:cell_id]
-    session_id = Map.get(payload, "session_id") || ctx.assigns[:session_id]
 
-    case Context.evaluate_cell(session_id, cell_id) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        IO.puts(
-          "[PromptBuddy] Failed to queue evaluation for #{inspect(cell_id)}: #{inspect(reason)}"
-        )
-    end
-
-    {:noreply, ctx}
-  end
 
   @impl true
   def handle_info({:clear_editor, cell_id}, ctx) do
@@ -237,14 +220,13 @@ defmodule Kino.PromptBuddy do
   def render_final_chat_history(outer, new_history) do
     all_msgs =
       new_history
-      |> Enum.reverse()
       |> Enum.flat_map(fn {u, a} ->
         [
-          Kino.Markdown.new("**You**:"),
-          Kino.Markdown.new("#{u}"),
-          Kino.Markdown.new("---"),
           Kino.Markdown.new("**Buddy**:"),
           Kino.Markdown.new("#{a}"),
+          Kino.Markdown.new("---"),
+          Kino.Markdown.new("**You**:"),
+          Kino.Markdown.new("#{u}"),
           Kino.Markdown.new("---"),
         ]
       end)
@@ -280,12 +262,11 @@ defmodule Kino.PromptBuddy do
       # Show all previous messages plus current prompt
       previous_msgs =
         chat_history
-        |> Enum.reverse()
         |> Enum.flat_map(fn {u, a} ->
           [
-            Kino.Markdown.new("**You**: #{u}"),
+            Kino.Markdown.new("**Buddy**: #{a}"),
             Kino.Markdown.new("---"),
-            Kino.Markdown.new("**Buddy**: #{a}")
+            Kino.Markdown.new("**You**: #{u}")
           ]
         end)
 

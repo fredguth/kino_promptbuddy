@@ -63,10 +63,7 @@ function renderForm() {
         <select class="form-select" aria-label="Select model">
           ${options}
         </select>
-
-
           <span class="hint">${SHORTCUT_HINT}</span>
-
       </div>
     </div>
   `;

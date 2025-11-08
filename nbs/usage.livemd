@@ -10,6 +10,182 @@ Mix.install([
 
 ## The context is all precedent cells
 
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtaGFpa3UtNC41Iiwibl9ldmVyeSI6MjQsInNlc3Npb25faWQiOiIzNTZtZGd0Z2xla2RpYnhwaWN4Z3BnZDQ1aWxhM250aTN2a3ByNGo2aTZ4bzc2NHIiLCJzb3VyY2UiOiIifQ","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+
+```elixir
+alias Kino.PromptBuddy.Context
+model = "openrouter:anthropic/claude-haiku-4.5"
+n_every = 24
+session_id = "356mdgtglekdibxpicxgpgd45ila3nti3vkpr4j6i6xo764r"
+current_cell_id = Context.get_current_cell_id()
+user_text = ""
+smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
+import Kino.Shorts
+outer = frame()
+body = frame()
+
+chat_history =
+  (fn -> Kino.PromptBuddy |> :erlang.apply(:get_history, [current_cell_id]) end).()
+
+previous_msgs =
+  chat_history
+  |> Enum.flat_map(fn {u, a} ->
+    [
+      Kino.Markdown.new("**Buddy**: #{a}"),
+      Kino.Markdown.new("---"),
+      Kino.Markdown.new("**You**: #{u}")
+    ]
+  end)
+
+current_prompt = Kino.Markdown.new("**You**: #{user_text}")
+buddy_header = Kino.Markdown.new("**Buddy**:")
+
+Kino.Frame.render(
+  outer,
+  Kino.Layout.grid(previous_msgs ++ [current_prompt, buddy_header, body])
+)
+
+Task.start(fn ->
+  Process.sleep(100)
+  IO.puts("[PromptBuddy] smart_cell_pid = #{inspect(smart_cell_pid)}")
+  IO.puts("[PromptBuddy] current_cell_id = #{inspect(current_cell_id)}")
+
+  if smart_cell_pid do
+    IO.puts("[PromptBuddy] Sending :clear_editor to #{inspect(smart_cell_pid)}")
+    send(smart_cell_pid, {:clear_editor, current_cell_id})
+  else
+    IO.puts("[PromptBuddy] No smart_cell_pid found")
+  end
+end)
+
+system_msg =
+  ReqLLM.Context.system(
+    "You are a patient pair-programming partner using **Polya's method** / **Socratic** style.\nPRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.\n"
+  )
+
+prompt_msg = ReqLLM.Context.user("--- BEGIN PROMPT ---
+#{user_text}
+--- END PROMPT ---
+")
+
+precedent_msgs =
+  case Context.get_notebook(session_id) do
+    {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
+    _ -> []
+  end
+
+history_msgs =
+  (fn -> Kino.PromptBuddy |> :erlang.apply(:history_to_messages, [chat_history]) end).()
+
+messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+
+Task.start(fn ->
+  (fn ->
+     Kino.PromptBuddy
+     |> :erlang.apply(:stream_response_and_update_history, [
+       model,
+       messages,
+       body,
+       outer,
+       user_text,
+       chat_history,
+       current_cell_id,
+       n_every
+     ])
+   end).()
+end)
+
+outer
+```
+
 My name is Fred
 
-<!-- livebook:{"offset":228,"stamp":{"token":"XCP.bb9oz86rFypsrmwFRD5ishCila0kHL_v7MVeBLaZRU3Nl86dkXCAuiUPkjmzDta-b-We__rS53D1ziMM6dWSoQEQ7gtlcPh1IEkNpJOlJqhs9f-3ODrPNGpPDp6A","version":2}} -->
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtaGFpa3UtNC41Iiwibl9ldmVyeSI6MjQsInNlc3Npb25faWQiOiIzNTZtZGd0Z2xla2RpYnhwaWN4Z3BnZDQ1aWxhM250aTN2a3ByNGo2aTZ4bzc2NHIiLCJzb3VyY2UiOiIifQ","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+
+```elixir
+alias Kino.PromptBuddy.Context
+model = "openrouter:anthropic/claude-haiku-4.5"
+n_every = 24
+session_id = "356mdgtglekdibxpicxgpgd45ila3nti3vkpr4j6i6xo764r"
+current_cell_id = Context.get_current_cell_id()
+user_text = ""
+smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
+import Kino.Shorts
+outer = frame()
+body = frame()
+
+chat_history =
+  (fn -> Kino.PromptBuddy |> :erlang.apply(:get_history, [current_cell_id]) end).()
+
+previous_msgs =
+  chat_history
+  |> Enum.flat_map(fn {u, a} ->
+    [
+      Kino.Markdown.new("**Buddy**: #{a}"),
+      Kino.Markdown.new("---"),
+      Kino.Markdown.new("**You**: #{u}")
+    ]
+  end)
+
+current_prompt = Kino.Markdown.new("**You**: #{user_text}")
+buddy_header = Kino.Markdown.new("**Buddy**:")
+
+Kino.Frame.render(
+  outer,
+  Kino.Layout.grid(previous_msgs ++ [current_prompt, buddy_header, body])
+)
+
+Task.start(fn ->
+  Process.sleep(100)
+  IO.puts("[PromptBuddy] smart_cell_pid = #{inspect(smart_cell_pid)}")
+  IO.puts("[PromptBuddy] current_cell_id = #{inspect(current_cell_id)}")
+
+  if smart_cell_pid do
+    IO.puts("[PromptBuddy] Sending :clear_editor to #{inspect(smart_cell_pid)}")
+    send(smart_cell_pid, {:clear_editor, current_cell_id})
+  else
+    IO.puts("[PromptBuddy] No smart_cell_pid found")
+  end
+end)
+
+system_msg =
+  ReqLLM.Context.system(
+    "You are a patient pair-programming partner using **Polya's method** / **Socratic** style.\nPRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.\n"
+  )
+
+prompt_msg = ReqLLM.Context.user("--- BEGIN PROMPT ---
+#{user_text}
+--- END PROMPT ---
+")
+
+precedent_msgs =
+  case Context.get_notebook(session_id) do
+    {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
+    _ -> []
+  end
+
+history_msgs =
+  (fn -> Kino.PromptBuddy |> :erlang.apply(:history_to_messages, [chat_history]) end).()
+
+messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+
+Task.start(fn ->
+  (fn ->
+     Kino.PromptBuddy
+     |> :erlang.apply(:stream_response_and_update_history, [
+       model,
+       messages,
+       body,
+       outer,
+       user_text,
+       chat_history,
+       current_cell_id,
+       n_every
+     ])
+   end).()
+end)
+
+outer
+```
+
+<!-- livebook:{"offset":5276,"stamp":{"token":"XCP.CibOVm2sZG3yaX4vTgWKzdTaMppw7sKlcIyGnvA-61Gky6JsWfK2IE-12McfgJOXYWcnPrXpSWTTCYZ5yhjcVuYkWMOjd1LCme_Nnre1Et65xmy-CUdiyeUKRNU8","version":2}} -->
