@@ -1,0 +1,1198 @@
+# Prompt Buddy from scratch
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.17.0"},
+  {:kino_progress_bar, github: "acalejos/kino_progress_bar"},
+  {:req_llm, "~> 1.0"}
+])
+```
+
+## Goal
+
+We want to allow a user *pair program* with an LLM, keeping a conversation about the notebook they are actively creating. This idea took inspiration from [Jeremy Howard's](https://en.wikipedia.org/wiki/Jeremy_Howard_(entrepreneur)) [Solve.it](https://solve.it.com/?via_id=u0nb5yov), an app and methodology designed to augment human capabilities with AI (and a refreshing alternative to the mind numbing nature of of vibe coding). The SolveIt app is Python-based,  and I have been really enjoying the method, but wanted to bring it to Elixir where I also code with notebooks.
+
+(*The [link](https://solve.it.com/?via_id=u0nb5yov) above includes a 15% discount if you’d like to enroll in the SolveIt course.*)
+
+`Prompt Buddy` will be a Livebook Smart Cell that allow the user to give a prompt in the context of all the cells that precede it in the notebook.
+
+To achieve this, we need to:
+
+1. Connect to an LLM, send a prompt, receive a response.
+   * ideally stream the response so the user don't have to wait until it;s complete to see something
+2. Create a Smart Cell UI that will allow the user to input the prompt
+3. Add the context (the source and outputs of the cells prior to the Smart Cell being inserted)
+
+I already have some experience with [ReqLLM](https://github.com/agentjido/req_llm) so I believe that the first step will be quite easy.  I have never created a Smart Cell before, but I saw [one](https://www.youtube.com/watch?v=Yw_EqX_KAw4&t=59s) and [other](https://www.youtube.com/watch?v=2YVfHNFLROw&t=72s) video that made me confident.
+
+The problem is the 3rd step, passing the context, as it will require some introspection: accessing the current notebook state in real time to collect information about the cells that precede the current one.
+
+## ReqLLM
+
+To connect to an LLM with ReqLLM we need an API KEY.  I decided to use [OpenRouter](openrouter.ai) and added the token in the Secrets menu in Livebook's navbar. It adds `LB_OPENROUTER_API_KEY` to the environment, which I then access:
+
+```elixir
+ReqLLM.put_key(:openrouter_api_key, System.get_env("LB_OPENROUTER_API_KEY"))
+```
+
+Using ReqLLM is a breeze.
+
+```elixir
+
+model = "openrouter:anthropic/claude-3-haiku"
+messages = [
+  ReqLLM.Context.system("You are a sassy storyteller."),
+  ReqLLM.Context.user("Protagonist: Miss Plum"),
+  ReqLLM.Context.user("Location: In Paris"),
+  ReqLLM.Context.user("Tell me a 100 words story with the input I gave you")
+  ]
+{:ok, response} = ReqLLM.stream_text(model, messages)
+ReqLLM.StreamResponse.tokens(response)
+|> Stream.each(&IO.write/1)
+|> Stream.run()
+
+```
+
+> is there a way to hide the Logs? :thinking:
+
+<!-- livebook:{"break_markdown":true} -->
+
+ReqLLM has some nice functionalities like enforcing schemas and bringing usage and cost information.
+
+```elixir
+usage = ReqLLM.StreamResponse.usage(response)
+```
+
+I don't know why it did not show the cost this time, never mind!
+
+## Smart Cells
+
+The next step is to create a `Smart Cell`.  I know the Smart Cell will need an UI, so I will start with that.
+
+<!-- livebook:{"break_markdown":true} -->
+
+### A ~Dumb~ Simple Smart Cell First
+
+<!-- livebook:{"break_markdown":true} -->
+
+The idea here is just to understand the annatomy of a Smart Cell
+
+```elixir
+
+defmodule Kino.Dumb do
+  use Kino.JS
+  use Kino.JS.Live # bi-directional communication with the frontend
+  use Kino.SmartCell, name: "Dumb"
+
+  # ------------------------------------------------------------
+  # 1. INITIALIZATION
+  # ------------------------------------------------------------
+  @impl true
+  # Called when the Smart Cell is first created.
+  # `attrs` contains saved attributes (if any) and `ctx` is the runtime context.
+  # This is helpful when the notebook is loaded from a file.
+  # Here we do nothing special—just return {:ok, ctx} to keep the context.
+  def init(attrs, ctx), do: {:ok, ctx}
+
+  # ------------------------------------------------------------
+  # 2. FRONTEND CONNECTION
+  # ------------------------------------------------------------
+  @impl true
+  # Called when the frontend (the JavaScript side) connects to the backend.
+  # We can send initial data to the frontend here.
+  # Returning {:ok, payload, ctx} sends `payload` to JS; we send an empty map.
+  def handle_connect(ctx),
+    do: {:ok, %{}, ctx}
+
+  # ------------------------------------------------------------
+  # 3. SERIALIZATION
+  # ------------------------------------------------------------
+  @impl true
+  # Defines which data from the context is stored as "attributes" of the cell
+  # when saving or exporting the notebook.
+  # Here we have nothing to persist, so we return an empty map.
+  def to_attrs(ctx), do: %{}
+
+  # ------------------------------------------------------------
+  # 4. CODE GENERATION
+  # ------------------------------------------------------------
+  @impl true
+  # Defines how the cell’s content is turned into Elixir source code.
+  # This is what will appear in the notebook when the Smart Cell "expands."
+  # Clicking the `< >` icon in the top of the cell.
+  def to_source(attrs) do
+    quote do
+      "Nothing to show"
+    end
+    # Kino helper that converts a quoted expression into a nicely formatted string.
+    |> Kino.SmartCell.quoted_to_string()
+  end
+
+  # ------------------------------------------------------------
+  # 5. FRONTEND ASSET (JavaScript)
+  # ------------------------------------------------------------
+  # Every Smart Cell can define a JS asset that runs in the browser.
+  # The string returned here is bundled and served to the frontend.
+  # It can use Livebook’s JS context API (ctx) to receive events or send messages.
+  asset "main.js" do
+    """
+    // Entry point called when the JS component is initialized.
+    // `ctx` is the communication channel; `payload` is what we sent in handle_connect.
+    export function init(ctx, payload) {
+      // No frontend UI yet—this is intentionally "dumb".
+    }
+    """
+  end
+end
+
+# ------------------------------------------------------------
+# 6. REGISTRATION
+# ------------------------------------------------------------
+# Registers this Smart Cell so it appears in Livebook’s Smart Cell picker.
+Kino.SmartCell.register(Kino.Dumb)
+```
+
+Click the `toggle source` icon:
+
+<!-- livebook:{"attrs":"e30","chunks":null,"kind":"Elixir.Kino.Dumb","livebook_object":"smart_cell"} -->
+
+```elixir
+"Nothing to show"
+```
+
+### Book Summarizer UI
+
+<!-- livebook:{"break_markdown":true} -->
+
+The Kino library in Livebook allow to build simple UIs.
+
+````elixir
+import Kino.Shorts
+
+if key = System.get_env("LB_OPENROUTER_API_KEY") do
+  ReqLLM.put_key(:openrouter_api_key, key)
+end
+
+model = "openrouter:anthropic/claude-3-haiku"
+
+# UI
+form =
+  Kino.Control.form(
+    [prompt: Kino.Input.textarea("Book Title:", default: "")],
+    submit: "Submit"
+  )
+
+form_frame = frame()
+user_output = frame()
+assistant_output = frame()
+Kino.Frame.render(form_frame, form)
+
+Kino.listen(form, fn event ->
+  # Hide the form after submit
+  Kino.Frame.render(form_frame, Kino.nothing())
+
+  book = String.trim(event.data.prompt || "Hamlet")
+  Kino.Frame.render(user_output, Kino.Markdown.new("**User**:\n\n" <> book))
+  Kino.Frame.render(assistant_output, Kino.Markdown.new("**Assistant**:\n\n"))
+
+  messages = [
+    ReqLLM.Context.system("Summarize the given book in under 300 words, focusing on plot, themes, characters, and context."),
+    ReqLLM.Context.user("Book title: " <> book)
+  ]
+  # Stream answer
+  Task.start(fn ->
+    case ReqLLM.stream_text(model, messages) do
+      {:ok, response} ->
+        # Render every N tokens to keep UI snappy (adjust N if you like)
+        n_every = 24
+
+        {final, _count} =
+          ReqLLM.StreamResponse.tokens(response)
+          |> Enum.reduce({"", 0}, fn token, {acc, n} ->
+            new = acc <> token
+            n2 = n + 1
+            if rem(n2, n_every) == 0 do
+              Kino.Frame.render(assistant_output, Kino.Markdown.new("**Assistant**:\n\n" <> new))
+            end
+            {new, n2}
+          end)
+
+        # Final flush + checkmark
+        Kino.Frame.render(
+          assistant_output,
+          Kino.Markdown.new("**Assistant**:\n\n" <> final <> " ✅")
+        )
+
+      {:error, err} ->
+        Kino.Frame.render(
+          assistant_output,
+          Kino.Markdown.new("**Error**:\n\n```\n" <> inspect(err, pretty: true) <> "\n```")
+        )
+    end
+  end)
+end)
+
+grid([form_frame, user_output, assistant_output])
+
+````
+
+### Book Worm Smart Cell
+
+<!-- livebook:{"break_markdown":true} -->
+
+Now we have everything to create a smart cell that summarizes books.
+
+````elixir
+defmodule Kino.BookWorm do
+  use Kino.JS
+  use Kino.JS.Live
+  use Kino.SmartCell, name: "Book Worm"
+
+  @impl true
+  def init(attrs, ctx) do
+    {:ok,
+     assign(ctx,
+       model: attrs["model"] || "openrouter:anthropic/claude-3-haiku",
+       n_every: attrs["n_every"] || 24, # render every n_every streamed tokens
+       title: attrs["title"] || ""
+     )}
+  end
+
+  @impl true
+  def handle_connect(ctx) do
+    {:ok,
+     %{
+       model: ctx.assigns[:model],
+       n_every: ctx.assigns[:n_every],
+       title: ctx.assigns[:title]
+     }, ctx}
+  end
+
+  @impl true
+  def to_attrs(ctx) do
+    %{
+      "model" => ctx.assigns[:model],
+      "n_every" => ctx.assigns[:n_every],
+      "title" => ctx.assigns[:title]
+    }
+  end
+
+  @impl true
+  def to_source(attrs) do
+    quote do
+      # ---------- Book Worm UI (auto-generated by Smart Cell) ----------
+      model   = unquote(attrs["model"])
+      n_every = unquote(attrs["n_every"])
+      title = unquote(attrs["title"])
+
+      import Kino.Shorts
+
+      # --- UI skeleton
+      form =
+        Kino.Control.form(
+          [
+            book: Kino.Input.text("Book Title", default: "#{title}")
+          ],
+          submit: "Summarize"
+        )
+
+      form_frame       = frame()
+      user_output      = frame()
+      assistant_output = frame()
+
+      Kino.Frame.render(form_frame, form)
+
+      Kino.listen(form, fn ev ->
+        # Optional: temporarily hide the form to avoid double submits
+        Kino.Frame.render(form_frame, Kino.nothing())
+
+        book_title = String.trim(ev.data.book || "")
+
+        Kino.Frame.render(
+          user_output,
+          Kino.Markdown.new("**Book**:\n\n" <> if(book_title == "", do: "_(empty)_", else: book_title))
+        )
+
+        Kino.Frame.render(assistant_output, Kino.Markdown.new("**Summary**:\n\n"))
+
+        messages = [
+          ReqLLM.Context.system(
+            "Summarize the given book in under 500 words, focusing on plot, themes, characters, and context."
+          ),
+          ReqLLM.Context.user("Book title: " <> (book_title == "" && "(empty)" || book_title))
+        ]
+
+        # Stream answer
+        Task.start(fn ->
+          case ReqLLM.stream_text(model, messages) do
+            {:ok, response} ->
+              {final, _count} =
+                ReqLLM.StreamResponse.tokens(response)
+                |> Enum.reduce({"", 0}, fn token, {acc, n} ->
+                  new_acc = acc <> token
+                  n2 = n + 1
+
+                  if rem(n2, n_every) == 0 do
+                    Kino.Frame.render(
+                      assistant_output,
+                      Kino.Markdown.new("**Summary**:\n\n" <> new_acc)
+                    )
+                  end
+
+                  {new_acc, n2}
+                end)
+
+              # Final flush + checkmark
+              Kino.Frame.render(
+                assistant_output,
+                Kino.Markdown.new("**Summary**:\n\n" <> final <> " ✅")
+              )
+
+            {:error, err} ->
+              Kino.Frame.render(
+                assistant_output,
+                Kino.Markdown.new("**Error**:\n\n```\n" <> inspect(err, pretty: true) <> "\n```")
+              )
+          end
+
+          # Re-show the form after processing
+          Kino.Frame.render(form_frame, form)
+        end)
+      end)
+
+      grid([
+        form_frame,
+        user_output,
+        assistant_output
+      ])
+      # ---------- /Book Worm UI ----------
+    end
+    |> Kino.SmartCell.quoted_to_string()
+  end
+
+  asset "main.js" do
+    """
+    export function init(_ctx, _payload) {
+      // No client-side wiring needed yet
+    }
+    """
+  end
+end
+
+Kino.SmartCell.register(Kino.BookWorm)
+````
+
+<!-- livebook:{"attrs":"e30","chunks":null,"kind":"Elixir.Kino.BookWorm","livebook_object":"smart_cell"} -->
+
+````elixir
+model = "openrouter:anthropic/claude-3-haiku"
+n_every = 24
+title = ""
+import Kino.Shorts
+
+form =
+  Kino.Control.form([book: Kino.Input.text("Book Title", default: "#{title}")],
+    submit: "Summarize"
+  )
+
+form_frame = frame()
+user_output = frame()
+assistant_output = frame()
+Kino.Frame.render(form_frame, form)
+
+Kino.listen(form, fn ev ->
+  Kino.Frame.render(form_frame, Kino.nothing())
+  book_title = String.trim(ev.data.book || "")
+
+  Kino.Frame.render(
+    user_output,
+    Kino.Markdown.new(
+      "**Book**:\n\n" <>
+        if book_title == "" do
+          "_(empty)_"
+        else
+          book_title
+        end
+    )
+  )
+
+  Kino.Frame.render(assistant_output, Kino.Markdown.new("**Summary**:\n\n"))
+
+  messages = [
+    ReqLLM.Context.system(
+      "Summarize the given book in under 500 words, focusing on plot, themes, characters, and context."
+    ),
+    ReqLLM.Context.user("Book title: " <> ((book_title == "" && "(empty)") || book_title))
+  ]
+
+  Task.start(fn ->
+    case ReqLLM.stream_text(model, messages) do
+      {:ok, response} ->
+        {final, _count} =
+          ReqLLM.StreamResponse.tokens(response)
+          |> Enum.reduce({"", 0}, fn token, {acc, n} ->
+            new_acc = acc <> token
+            n2 = n + 1
+
+            if rem(n2, n_every) == 0 do
+              Kino.Frame.render(
+                assistant_output,
+                Kino.Markdown.new("**Summary**:\n\n" <> new_acc)
+              )
+            end
+
+            {new_acc, n2}
+          end)
+
+        Kino.Frame.render(
+          assistant_output,
+          Kino.Markdown.new("**Summary**:\n\n" <> final <> " ✅")
+        )
+
+      {:error, err} ->
+        Kino.Frame.render(
+          assistant_output,
+          Kino.Markdown.new(
+            "**Error**:\n\n```\n" <> inspect(err, pretty: true) <> "\n```"
+          )
+        )
+    end
+
+    Kino.Frame.render(form_frame, form)
+  end)
+end)
+
+grid([form_frame, user_output, assistant_output])
+````
+
+## Introspection
+
+We already know how to connect to LLM and how to create a Smart Cell.  The last step is the most difficult, do some `reflection` and find out the cells that precede the current one.
+
+With some help from [Hugo](https://gist.github.com/hugobarauna), I found out that I need to:
+
+* Know the `current_cell_id`, the id of the smart cell;
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### current_cell_id
+
+This is the easiest information to gather, Kino helps us:
+
+```elixir
+Kino.Bridge.get_evaluation_file()
+      |> String.split("#cell:")
+      |> List.last()
+```
+
+You can check that it is right by inspect the notebook HTML.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### livebook node
+
+<!-- livebook:{"break_markdown":true} -->
+
+The session of me using this notebook is a node in the Elixir BEAM.
+
+```elixir
+notebook_node = node()
+```
+
+But we are interested in another node, the node of the Livebook app itself.
+
+```elixir
+livebook_node =
+    node()
+    |> Atom.to_string()
+    |> String.replace(~r/--[^@]+@/, "@")
+    |> String.to_atom()
+```
+
+As you have seen, every  notebook node has the node address of its livebook.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### sessions
+
+```elixir
+sessions = :erpc.call(livebook_node, Livebook.Tracker, :list_sessions, [])
+```
+
+In a few moments you will see that we need to know our current session id to filter this map.
+This information is in the URL, but there isn't a direct Elixir-side API that exposes the browser's `document.baseURI`.
+
+But Let's remember we will create a SmartCell and smart cells have access to JS. Let's use it to get the session_id.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### session_id
+
+<!-- livebook:{"break_markdown":true} -->
+
+Let's modify the Dumb Smart Cell to get the  `session_id`.
+
+```elixir
+
+defmodule Kino.Cebola do
+  use Kino.JS
+  use Kino.JS.Live
+  use Kino.SmartCell, name: "Cebola"
+
+  def new(), do: Kino.JS.Live.new(__MODULE__, %{})
+  def get_session_id(kino), do: Kino.JS.Live.call(kino, :get_session_id)
+  def get_current_cell_id() do
+    Kino.Bridge.get_evaluation_file()
+      |> String.split("#cell:")
+      |> List.last()
+  end
+  @impl true
+  def init(_payload, ctx) do
+    {:ok, assign(ctx, session_id: nil)}
+  end
+
+  @impl true
+  def handle_connect(ctx),
+    do: {:ok, %{}, ctx}
+
+  @impl true
+  def to_attrs(_), do: %{}
+
+  @impl true
+  def to_source(_) do
+  end
+
+  @impl true
+  def handle_event("set_session_id", session_url, ctx) do
+    session_id =
+      case Regex.run(~r{/sessions/([^/]+)/}, session_url) do
+        [_, id] -> id
+        _ -> nil
+      end
+
+    {:noreply, assign(ctx, session_id: session_id)}
+  end
+
+  @impl true
+  def handle_call(:get_session_id, _from, ctx) do
+    {:reply, ctx.assigns.session_id, ctx}
+  end
+
+  asset "main.js" do
+    """
+    export function init(ctx) {
+      // When the client connects, send the page baseURI so the backend can parse the session id.
+      ctx.pushEvent("set_session_id", document.baseURI);
+    }
+    """
+  end
+end
+
+
+```
+
+```elixir
+cebola = Kino.Cebola.new()
+
+# You must render it so the JS `init` runs and pushes the baseURI.
+Kino.render(cebola)
+```
+
+```elixir
+session_id = Kino.Cebola.get_session_id(cebola)
+session_id
+```
+
+#### session.pid
+
+```elixir
+session = Enum.find(sessions, &(&1.id == session_id))
+session.pid
+```
+
+#### notebook
+
+```elixir
+notebook = :erpc.call(livebook_node, Livebook.Session, :get_notebook, [session.pid])
+map_size(notebook)
+```
+
+#### precedent_cells
+
+Now we have what we need to get the context:
+
+```elixir
+all = Enum.flat_map(notebook.sections, & &1.cells)
+idx = Enum.find_index(all, &(&1.id == Kino.Cebola.get_current_cell_id()))
+cells = Enum.take(all, idx+1)
+```
+
+Phew!
+
+## Wrapping Up: Hello Buddy!
+
+````elixir
+defmodule Kino.PromptBuddy do
+  use Kino.JS
+  use Kino.JS.Live
+  use Kino.SmartCell, name: "Prompt Buddy"
+
+# -- Public API --------------------------------------------------------------
+
+  def new(), do: Kino.JS.Live.new(__MODULE__, %{})
+
+  def get_session_id(kino), do: Kino.JS.Live.call(kino, :get_session_id)
+
+  def get_current_cell_id() do
+    Kino.Bridge.get_evaluation_file()
+      |> String.split("#cell:")
+      |> List.last()
+  end
+
+  def get_notebook(session_id) do
+    node_norm =
+      node()
+      |> Atom.to_string()
+      |> String.replace(~r/--[^@]+@/, "@")
+      |> String.to_atom()
+
+    Node.set_cookie(node_norm, Node.get_cookie())
+    sessions = :erpc.call(node_norm, Livebook.Tracker, :list_sessions, [])
+    case Enum.find(sessions, &(&1.id == session_id)) do
+      nil -> {:error, :session_not_found}
+      s -> {:ok, :erpc.call(node_norm, Livebook.Session, :get_notebook, [s.pid])}
+    end
+  end
+
+  defp cells_until(notebook, current_cell_id) do
+    all = Enum.flat_map(notebook.sections, & &1.cells)
+    idx = Enum.find_index(all, &(&1.id == current_cell_id)) || length(all) - 1
+    {:ok, Enum.take(all, idx + 1)}
+  end
+
+  def build_messages(session_id, current_cell_id) do
+    with true <- is_binary(session_id),
+         true <- is_binary(current_cell_id),
+         {:ok, notebook} <- get_notebook(session_id),
+         {:ok, cells} <- cells_until(notebook, current_cell_id) do
+      cells
+      |> Enum.map(&String.trim(&1.source || ""))
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.with_index()
+      |> Enum.map(fn
+        {text, 0} -> ReqLLM.Context.system(text)
+        {text, _} -> ReqLLM.Context.user(text)
+      end)
+    else
+      _ -> []
+    end
+  end
+
+
+  @impl true
+  def init(attrs, ctx) do
+    {:ok,
+     assign(ctx,
+       session_id: attrs["session_id"],
+       model: attrs["model"] || "openrouter:anthropic/claude-sonnet-4.5",
+       n_every: attrs["n_every"] || 24
+     )}
+  end
+
+  @impl true
+  def handle_connect(ctx) do
+    {:ok,
+     %{
+       session_id: ctx.assigns[:session_id],
+       model: ctx.assigns[:model],
+       n_every: ctx.assigns[:n_every]
+     }, ctx}
+  end
+
+  @impl true
+  def handle_event("set_session_id", session_url, ctx) do
+    session_id =
+      case Regex.run(~r{/sessions/([^/]+)/}, session_url) do
+        [_, id] -> id
+        _ -> nil
+      end
+
+    {:noreply, assign(ctx, session_id: session_id)}
+  end
+
+  @impl true
+  def to_attrs(ctx) do
+    %{
+      "session_id" => ctx.assigns[:session_id],
+      "model" => ctx.assigns[:model],
+      "n_every" => ctx.assigns[:n_every]
+    }
+  end
+
+  @impl true
+  def to_source(attrs) do
+    quote do
+      # ---------- PromptBuddy UI (auto-generated by SmartCell) ----------
+      model   = unquote(attrs["model"])
+      n_every = unquote(attrs["n_every"])
+      session_id = unquote(attrs["session_id"])
+      current_cell_id = Kino.PromptBuddy.get_current_cell_id()
+
+
+      import Kino.Shorts
+
+      # --- UI skeleton
+      form =
+        Kino.Control.form(
+          [
+            prompt: Kino.Input.textarea("Prompt", default: "")
+          ],
+          submit: "Send"
+        )
+
+      form_frame        = frame()
+      user_output       = frame()
+      assistant_output  = frame()
+
+      Kino.Frame.render(form_frame, form)
+
+      Kino.listen(form, fn ev ->
+        # Hide form to discourage double-submit; re-render at end if you prefer
+        Kino.Frame.render(form_frame, Kino.nothing())
+
+        user_text   = String.trim(ev.data.prompt || "")
+        Kino.Frame.render(user_output, Kino.Markdown.new("**User**:\n\n" <> (user_text == "" && "_(empty)_" || user_text)))
+        Kino.Frame.render(assistant_output, Kino.Markdown.new("**Assistant**:\n\n"))
+
+        # 1) Build context from previous cells
+        base_ctx =
+          case {session_id, current_cell_id} do
+            {sid, cid} when is_binary(sid) and is_binary(cid) ->
+              Kino.PromptBuddy.build_messages(sid, cid)
+            _ ->
+              []
+          end
+
+        messages = base_ctx ++ [ReqLLM.Context.user(user_text)]
+
+        # Stream
+        Task.start(fn ->
+          case ReqLLM.stream_text(model, messages) do
+            {:ok, response} ->
+              {final, _count} =
+                ReqLLM.StreamResponse.tokens(response)
+                |> Enum.reduce({"", 0}, fn token, {acc, n} ->
+                  new = acc <> token
+                  n2 = n + 1
+
+                  if rem(n2, n_every) == 0 do
+                    Kino.Frame.render(assistant_output, Kino.Markdown.new("**Assistant**:\n\n" <> new))
+                  end
+
+                  {new, n2}
+                end)
+
+              # Final flush
+              Kino.Frame.render(
+                assistant_output,
+                Kino.Markdown.new("**Assistant**:\n\n" <> final <> " ✅")
+              )
+
+            {:error, err} ->
+              Kino.Frame.render(
+                assistant_output,
+                Kino.Markdown.new("**Error**:\n\n```\n" <> inspect(err, pretty: true) <> "\n```")
+              )
+          end
+        end)
+      end)
+
+      grid([
+        form_frame,
+        user_output,
+        assistant_output
+      ])
+      # ---------- /PromptBuddy UI ----------
+    end
+    |> Kino.SmartCell.quoted_to_string()
+  end
+
+  asset "main.js" do
+    """
+    export function init(ctx, _payload) {
+
+      // Capture session id so we can retrieve previous cells
+      ctx.pushEvent("set_session_id", document.baseURI);
+    }
+    """
+  end
+end
+
+Kino.SmartCell.register(Kino.PromptBuddy)
+````
+
+<!-- livebook:{"attrs":"eyJtb2RlbCI6Im9wZW5yb3V0ZXI6YW50aHJvcGljL2NsYXVkZS1zb25uZXQtNC41Iiwibl9ldmVyeSI6MjQsInNlc3Npb25faWQiOiIzNTZtZGd0Z2xla2RpYnhwaWN4Z3BnZDQ1aWxhM25yYWRraTJvbjdyaTZmNTN5M3MifQ","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+
+````elixir
+model = "openrouter:anthropic/claude-sonnet-4.5"
+n_every = 24
+session_id = "356mdgtglekdibxpicxgpgd45ila3nradki2on7ri6f53y3s"
+current_cell_id = Kino.PromptBuddy.get_current_cell_id()
+import Kino.Shorts
+
+form =
+  Kino.Control.form([prompt: Kino.Input.textarea("Prompt", default: "")], submit: "Send")
+
+form_frame = frame()
+user_output = frame()
+assistant_output = frame()
+Kino.Frame.render(form_frame, form)
+
+Kino.listen(form, fn ev ->
+  Kino.Frame.render(form_frame, Kino.nothing())
+  user_text = String.trim(ev.data.prompt || "")
+
+  Kino.Frame.render(
+    user_output,
+    Kino.Markdown.new("**User**:\n\n" <> ((user_text == "" && "_(empty)_") || user_text))
+  )
+
+  Kino.Frame.render(assistant_output, Kino.Markdown.new("**Assistant**:\n\n"))
+
+  base_ctx =
+    case {session_id, current_cell_id} do
+      {sid, cid} when is_binary(sid) and is_binary(cid) ->
+        Kino.PromptBuddy.build_messages(sid, cid)
+
+      _ ->
+        []
+    end
+
+  messages = base_ctx ++ [ReqLLM.Context.user(user_text)]
+
+  Task.start(fn ->
+    case ReqLLM.stream_text(model, messages) do
+      {:ok, response} ->
+        {final, _count} =
+          ReqLLM.StreamResponse.tokens(response)
+          |> Enum.reduce({"", 0}, fn token, {acc, n} ->
+            new = acc <> token
+            n2 = n + 1
+
+            if rem(n2, n_every) == 0 do
+              Kino.Frame.render(
+                assistant_output,
+                Kino.Markdown.new("**Assistant**:\n\n" <> new)
+              )
+            end
+
+            {new, n2}
+          end)
+
+        Kino.Frame.render(
+          assistant_output,
+          Kino.Markdown.new("**Assistant**:\n\n" <> final <> " ✅")
+        )
+
+      {:error, err} ->
+        Kino.Frame.render(
+          assistant_output,
+          Kino.Markdown.new(
+            "**Error**:\n\n```\n" <> inspect(err, pretty: true) <> "\n```"
+          )
+        )
+    end
+  end)
+end)
+
+grid([form_frame, user_output, assistant_output])
+````
+
+### Improvements
+
+````elixir
+defmodule Kino.PromptBuddy do
+  use Kino.JS
+  use Kino.JS.Live
+  use Kino.SmartCell, name: "Prompt Buddy"
+
+# -- Public API --------------------------------------------------------------
+
+  def new(), do: Kino.JS.Live.new(__MODULE__, %{})
+
+  def get_session_id(kino), do: Kino.JS.Live.call(kino, :get_session_id)
+
+  def get_current_cell_id() do
+    Kino.Bridge.get_evaluation_file()
+      |> String.split("#cell:")
+      |> List.last()
+  end
+
+  def get_notebook(session_id) do
+    node_norm =
+      node()
+      |> Atom.to_string()
+      |> String.replace(~r/--[^@]+@/, "@")
+      |> String.to_atom()
+
+    Node.set_cookie(node_norm, Node.get_cookie())
+    sessions = :erpc.call(node_norm, Livebook.Tracker, :list_sessions, [])
+    case Enum.find(sessions, &(&1.id == session_id)) do
+      nil -> {:error, :session_not_found}
+      s -> {:ok, :erpc.call(node_norm, Livebook.Session, :get_notebook, [s.pid])}
+    end
+  end
+
+  defp cells_until(notebook, current_cell_id) do
+    all = Enum.flat_map(notebook.sections, & &1.cells)
+    idx = Enum.find_index(all, &(&1.id == current_cell_id)) || length(all) - 1
+    {:ok, Enum.take(all, idx + 1)}
+  end
+
+  def build_messages(session_id, current_cell_id) do
+    with true <- is_binary(session_id),
+         true <- is_binary(current_cell_id),
+         {:ok, notebook} <- get_notebook(session_id),
+         {:ok, cells} <- cells_until(notebook, current_cell_id) do
+      cells
+      |> Enum.map(&String.trim(&1.source || ""))
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.with_index()
+      |> Enum.map(fn
+        {text, 0} -> ReqLLM.Context.system(text)
+        {text, _} -> ReqLLM.Context.user(text)
+      end)
+    else
+      _ -> []
+    end
+  end
+
+
+  @impl true
+  def init(attrs, ctx) do
+    source = attrs["source"] || ""
+    {:ok,
+     assign(ctx,
+       source: source,
+       session_id: attrs["session_id"],
+       model: attrs["model"] || "openrouter:anthropic/claude-sonnet-4.5",
+       n_every: attrs["n_every"] || 24
+     ),
+     editor: [source: source, language: "markdown", placement: :top]}
+  end
+
+  @impl true
+  def handle_connect(ctx) do
+    {:ok,
+     %{
+       session_id: ctx.assigns[:session_id],
+       model: ctx.assigns[:model],
+       n_every: ctx.assigns[:n_every]
+     }, ctx}
+  end
+
+  @impl true
+  def handle_editor_change(source, ctx) do
+    {:ok, assign(ctx, source: source)}
+  end
+
+  @impl true
+  def handle_event("set_session_id", session_url, ctx) do
+    session_id =
+      case Regex.run(~r{/sessions/([^/]+)/}, session_url) do
+        [_, id] -> id
+        _ -> nil
+      end
+
+    {:noreply, assign(ctx, session_id: session_id)}
+  end
+
+  @impl true
+  def to_attrs(ctx) do
+    %{
+      "source" => ctx.assigns[:source],
+      "session_id" => ctx.assigns[:session_id],
+      "model" => ctx.assigns[:model],
+      "n_every" => ctx.assigns[:n_every]
+    }
+  end
+
+  @impl true
+  def to_source(attrs) do
+    quote do
+      # ---------- PromptBuddy UI (auto-generated by SmartCell) ----------
+      model   = unquote(attrs["model"])
+      n_every = unquote(attrs["n_every"])
+      session_id = unquote(attrs["session_id"])
+      current_cell_id = Kino.PromptBuddy.get_current_cell_id()
+      user_text = unquote(attrs["source"])
+
+      import Kino.Shorts
+
+      # --- UI frames
+      user_output       = frame()
+      assistant_output  = frame()
+
+      Kino.Frame.render(user_output, Kino.Markdown.new("**User**:\n\n" <> (user_text == "" && "_(empty)_" || user_text)))
+      Kino.Frame.render(assistant_output, Kino.Markdown.new("**Buddy**:\n\n"))
+
+      # 1) Build context from previous cells
+      base_ctx =
+        case {session_id, current_cell_id} do
+          {sid, cid} when is_binary(sid) and is_binary(cid) ->
+            Kino.PromptBuddy.build_messages(sid, cid)
+          _ ->
+            []
+        end
+
+      messages = base_ctx ++ [ReqLLM.Context.user(user_text)]
+
+      # Stream
+      Task.start(fn ->
+        case ReqLLM.stream_text(model, messages) do
+          {:ok, response} ->
+            {final, _count} =
+              ReqLLM.StreamResponse.tokens(response)
+              |> Enum.reduce({"", 0}, fn token, {acc, n} ->
+                new = acc <> token
+                n2 = n + 1
+
+                if rem(n2, n_every) == 0 do
+                  Kino.Frame.render(assistant_output, Kino.Markdown.new("**Buddy**:\n\n" <> new))
+                end
+
+                {new, n2}
+              end)
+
+            # Final flush
+            Kino.Frame.render(
+              assistant_output,
+              Kino.Markdown.new("**Buddy**:\n\n" <> final <> " ✅")
+            )
+
+          {:error, err} ->
+            Kino.Frame.render(
+              assistant_output,
+              Kino.Markdown.new("**Error**:\n\n```\n" <> inspect(err, pretty: true) <> "\n```")
+            )
+        end
+      end)
+
+      grid([
+        user_output,
+        assistant_output
+      ])
+      # ---------- /PromptBuddy UI ----------
+    end
+    |> Kino.SmartCell.quoted_to_string()
+  end
+
+  asset "main.js" do
+    """
+    export function init(ctx, _payload) {
+      ctx.importCSS("main.css");
+
+      ctx.root.innerHTML = `
+        <div class="buddy-form">
+          <div class="form-header">
+            <h3 class="header-title">Prompt</h3>
+            <select class="form-select">
+              <option value="sonnet" selected>Sonnet</option>
+              <option value="haiku">Haiku</option>
+              <option value="opus">Opus</option>
+            </select>
+            <button class="form-button">Send</button>
+          </div>
+        </div>
+      `;
+
+      // Capture session id so we can retrieve previous cells
+      ctx.pushEvent("set_session_id", document.baseURI);
+    }
+    """
+  end
+
+  asset "main.css" do
+    """
+    .buddy-form {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      padding: 12px;
+      background: #F0EEE6;
+      border-radius: 0px;
+      margin-bottom: 0px;
+    }
+    .form-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .header-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1f2937;
+      margin: 0;
+      flex: 1;
+    }
+    .form-select {
+      min-width: 140px;
+      padding: 8px 32px 8px 12px;
+      font-size: 14px;
+      color: #1f2937;
+      background-color: #ffffff;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      appearance: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .form-select:hover {
+      border-color: #9ca3af;
+      background-color: #f9fafb;
+    }
+    .form-select:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .form-button {
+      padding: 8px 20px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #ffffff;
+      background-color: #BA5B3B;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .form-button:hover {
+      background-color: #A14F32;
+    }
+    .form-button:active {
+      background-color: #8A4429;
+      transform: translateY(1px);
+    }
+    .form-button:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(186, 91, 59, 0.3);
+    }
+    """
+  end
+end
+
+Kino.SmartCell.register(Kino.PromptBuddy)
+````
+
+<!-- livebook:{"attrs":"eyJhbnN3ZXJfdmFyaWFibGUiOiJhbnN3ZXIiLCJhcGlfcmVzdWx0X3ZhcmlhYmxlIjoiYXBpX3Jlc3VsdCIsInRvcGljIjoiV2hvIHdhcyBTYW50b3MgRHVtb250PyJ9","chunks":null,"kind":"Elixir.KinoDuckDuckGo","livebook_object":"smart_cell"} -->
+
+```elixir
+api_result = ExDuck.query!("Who was Santos Dumont?")
+answer = api_result |> ExDuck.understand()
+answer |> ExDuck.to_markdown() |> Kino.Markdown.new()
+```
+
+<!-- livebook:{"offset":33900,"stamp":{"token":"XCP.9z0-iTaU1u-L5Z6qGBu9en0aPX9cSjlg-2qDHfS2N6wlplvu6x-8J1A05E3HqM19WfxnD8BuynTI2AlqID9thRN1XZbI4fKatO4WBQ9Ml_YzTX6voXb-hia1S4EA","version":2}} -->

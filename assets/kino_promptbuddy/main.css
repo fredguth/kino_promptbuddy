@@ -1,0 +1,87 @@
+.buddy-form {
+    font-family:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
+        sans-serif;
+    padding: 12px;
+    background: #f0eee6;
+    border: 1px solid #d1d5db;
+    border-radius: 0px;
+    margin-bottom: 0px;
+}
+.form-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+.header-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0;
+    flex: 1;
+}
+.form-select {
+    min-width: 140px;
+    padding: 8px 32px 8px 12px;
+    font-size: 14px;
+    color: #1f2937;
+    background-color: #ffffff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    appearance: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.form-select:hover {
+    border-color: #9ca3af;
+    background-color: #f9fafb;
+}
+.form-select:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+.form-run {
+    --button-bg: #ba5b3b;
+    --button-text: #fff7f0;
+    --button-border: transparent;
+    --button-hover-bg: #a24d33;
+    --button-hover-text: #fff7f0;
+    --button-hover-border: transparent;
+    --button-focus-outline: rgba(186, 91, 59, 0.6);
+    --button-loading-color: #fefaf7;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--button-text);
+    background-color: var(--button-bg);
+    border: 1px solid var(--button-border);
+    border-radius: 5px;
+    cursor: pointer;
+    transition:
+        background-color 0.15s ease,
+        transform 0.1s ease;
+}
+.form-run .hint {
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.85;
+}
+.form-run:hover {
+    background-color: var(--button-hover-bg);
+    color: var(--button-hover-text);
+}
+.form-run:focus-visible {
+    outline: 2px solid var(--button-focus-outline);
+    outline-offset: 2px;
+}
+.form-run:active {
+    transform: translateY(1px);
+}
