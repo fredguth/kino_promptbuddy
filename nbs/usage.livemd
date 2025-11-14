@@ -10,81 +10,31 @@ Mix.install([
 
 ## The context is all precedent cells
 
-<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtaGFpa3UtNC41Iiwibl9ldmVyeSI6MjQsInNlc3Npb25faWQiOiIzNTZtZGd0Z2xla2RpYnhwaWN4Z3BnZDQ1aWxhM250aTN2a3ByNGo2aTZ4bzc2NHIiLCJzb3VyY2UiOiIifQ","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+**User:**
 
-```elixir
-alias Kino.PromptBuddy.Context
-model = "openrouter:anthropic/claude-haiku-4.5"
-n_every = 24
-session_id = "356mdgtglekdibxpicxgpgd45ila3nti3vkpr4j6i6xo764r"
-current_cell_id = Context.get_current_cell_id()
-user_text = ""
-smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
-import Kino.Shorts
-outer = frame()
-body = frame()
-chat_history = Kino.PromptBuddy.get_history(current_cell_id)
-prompt_blank? = String.trim(user_text) == ""
-previous_msgs = Kino.PromptBuddy.history_markdown(chat_history)
-current_prompt_header = Kino.Markdown.new("**You**:")
-current_prompt_body = Kino.Markdown.new(user_text)
-buddy_header = Kino.Markdown.new("**Buddy**:")
+Hi, what is your name?  And what is your model?
 
-Kino.Frame.render(
-  outer,
-  Kino.Layout.grid(
-    previous_msgs ++ [current_prompt_header, current_prompt_body, buddy_header, body]
-  )
-)
+<!-- livebook:{"break_markdown":true} -->
 
-unless prompt_blank? do
-  Task.start(fn ->
-    Process.sleep(100)
+**Buddy:**
 
-    if smart_cell_pid do
-      send(smart_cell_pid, {:clear_editor, current_cell_id})
-    end
-  end)
+Hi! I'm Claude, made by Anthropic. I'm Claude 3.5 Sonnet.
 
-  system_msg =
-    ReqLLM.Context.system(
-      "You are a patient pair-programming partner using **Polya's method** / **Socratic** style.\nPRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.\n"
-    )
+How can I help you with coding today?
 
-  prompt_msg = ReqLLM.Context.user("--- BEGIN PROMPT ---
-#{user_text}
---- END PROMPT ---
-")
+<!-- livebook:{"break_markdown":true} -->
 
-  precedent_msgs =
-    case Context.get_notebook(session_id) do
-      {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
-      _ -> []
-    end
+**User:**
 
-  history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
-  messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+Do you know my name?
 
-  Task.start(fn ->
-    Kino.PromptBuddy.stream_response_and_update_history(
-      model,
-      messages,
-      body,
-      outer,
-      user_text,
-      chat_history,
-      current_cell_id,
-      n_every
-    )
-  end)
-end
+<!-- livebook:{"break_markdown":true} -->
 
-outer
-```
+**Buddy:**
 
-My name is Fred
+No, I don't know your name. You haven't shared it with me yet in our conversation.
 
-## Now Buddy knows my name
+Would you like to tell me your name? And is there a coding problem I can help you with today?
 
 <!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQuNSIsIm5fZXZlcnkiOjI0LCJzZXNzaW9uX2lkIjoiMzU2bWRndGdsZWtkaWJ4cGljeGdwZ2Q0NWlsYTNudGkzdmtwcjRqNmk2eG83NjRyIiwic291cmNlIjoiIn0","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
 
@@ -96,22 +46,25 @@ session_id = "356mdgtglekdibxpicxgpgd45ila3nti3vkpr4j6i6xo764r"
 current_cell_id = Context.get_current_cell_id()
 user_text = ""
 smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
+
+session_ctx =
+  case session_id do
+    nil ->
+      nil
+
+    _ ->
+      case Context.fetch_session(session_id) do
+        {:ok, _node, _session} = ctx -> ctx
+        _ -> nil
+      end
+  end
+
 import Kino.Shorts
 outer = frame()
 body = frame()
 chat_history = Kino.PromptBuddy.get_history(current_cell_id)
 prompt_blank? = String.trim(user_text) == ""
-previous_msgs = Kino.PromptBuddy.history_markdown(chat_history)
-current_prompt_header = Kino.Markdown.new("**You**:")
-current_prompt_body = Kino.Markdown.new(user_text)
-buddy_header = Kino.Markdown.new("**Buddy**:")
-
-Kino.Frame.render(
-  outer,
-  Kino.Layout.grid(
-    previous_msgs ++ [current_prompt_header, current_prompt_body, buddy_header, body]
-  )
-)
+Kino.Frame.render(outer, Kino.Layout.grid([body]))
 
 unless prompt_blank? do
   Task.start(fn ->
@@ -121,6 +74,8 @@ unless prompt_blank? do
       send(smart_cell_pid, {:clear_editor, current_cell_id})
     end
   end)
+
+  Kino.PromptBuddy.insert_user_cell(session_id, current_cell_id, user_text, session_ctx)
 
   system_msg =
     ReqLLM.Context.system(
@@ -133,7 +88,7 @@ unless prompt_blank? do
 ")
 
   precedent_msgs =
-    case Context.get_notebook(session_id) do
+    case Context.get_notebook_from_session(session_ctx) do
       {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
       _ -> []
     end
@@ -150,7 +105,9 @@ unless prompt_blank? do
       user_text,
       chat_history,
       current_cell_id,
-      n_every
+      n_every,
+      session_id,
+      session_ctx
     )
   end)
 end
@@ -158,4 +115,106 @@ end
 outer
 ```
 
-<!-- livebook:{"offset":4577,"stamp":{"token":"XCP.DTp7LIpgb-uWMxvF-g_GmMS7n1xL1--Ol3zFi9UBEPfHPiiGafET8RrQTbIN7e_Ir2mP-q5tl1uiZHTIGO2M4_iJ3_1jnh2kQHnK0UVXfWWarAwfz2XRgUicB7Km","version":2}} -->
+My name is Fred.
+
+## Now Buddy knows my name
+
+**User:**
+
+Write me a poem.
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Here's a short poem for you, Fred:
+
+```
+Code and logic intertwine,
+Functions flow like morning wine,
+Bugs emerge, then fade away,
+Better code at end of day.
+```
+
+What kind of coding help do you need?
+
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtaGFpa3UtNC41Iiwibl9ldmVyeSI6MjQsInNlc3Npb25faWQiOiIzNTZtZGd0Z2xla2RpYnhwaWN4Z3BnZDQ1aWxhM250aTN2a3ByNGo2aTZ4bzc2NHIiLCJzb3VyY2UiOiIifQ","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+
+```elixir
+alias Kino.PromptBuddy.Context
+model = "openrouter:anthropic/claude-haiku-4.5"
+n_every = 24
+session_id = "356mdgtglekdibxpicxgpgd45ila3nti3vkpr4j6i6xo764r"
+current_cell_id = Context.get_current_cell_id()
+user_text = ""
+smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
+
+session_ctx =
+  case session_id do
+    nil ->
+      nil
+
+    _ ->
+      case Context.fetch_session(session_id) do
+        {:ok, _node, _session} = ctx -> ctx
+        _ -> nil
+      end
+  end
+
+import Kino.Shorts
+outer = frame()
+body = frame()
+chat_history = Kino.PromptBuddy.get_history(current_cell_id)
+prompt_blank? = String.trim(user_text) == ""
+Kino.Frame.render(outer, Kino.Layout.grid([body]))
+
+unless prompt_blank? do
+  Task.start(fn ->
+    Process.sleep(100)
+
+    if smart_cell_pid do
+      send(smart_cell_pid, {:clear_editor, current_cell_id})
+    end
+  end)
+
+  Kino.PromptBuddy.insert_user_cell(session_id, current_cell_id, user_text, session_ctx)
+
+  system_msg =
+    ReqLLM.Context.system(
+      "You are a patient pair-programming partner using **Polya's method** / **Socratic** style.\nPRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.\n"
+    )
+
+  prompt_msg = ReqLLM.Context.user("--- BEGIN PROMPT ---
+#{user_text}
+--- END PROMPT ---
+")
+
+  precedent_msgs =
+    case Context.get_notebook_from_session(session_ctx) do
+      {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
+      _ -> []
+    end
+
+  history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
+  messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+
+  Task.start(fn ->
+    Kino.PromptBuddy.stream_response_and_update_history(
+      model,
+      messages,
+      body,
+      outer,
+      user_text,
+      chat_history,
+      current_cell_id,
+      n_every,
+      session_id,
+      session_ctx
+    )
+  end)
+end
+
+outer
+```
+
+<!-- livebook:{"offset":5442,"stamp":{"token":"XCP.lf5vlDjiK4w0O65e1CNrPpsyean8caEY4i9W2A7yR7-JFYaY95mBpJLe-0DTOsRbKDIKm3U_1BcTVYMZBPeB4njeLqJzFidKeigLkQxcFKg1wbvtidXwqk82sPkj","version":2}} -->

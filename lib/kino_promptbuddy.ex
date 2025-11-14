@@ -5,7 +5,7 @@ defmodule Kino.PromptBuddy do
   use Kino.JS.Live
   use Kino.SmartCell, name: "Prompt Buddy"
 
-  alias Kino.PromptBuddy.Context
+  alias Kino.PromptBuddy.{Context, CellInserter}
 
   # -- Public API --------------------------------------------------------------
 
@@ -118,18 +118,20 @@ defmodule Kino.PromptBuddy do
         model,
         messages,
         body,
-        outer,
+        _outer,
         user_text,
         chat_history,
         current_cell_id,
-        n_every
+        n_every,
+        session_id,
+        session_ctx \\ nil
       ) do
     case ReqLLM.stream_text(model, messages) do
       {:ok, response} ->
         final_text = handle_streaming_response(response, body, n_every)
         new_history = [{user_text, final_text} | chat_history]
         update_chat_history(current_cell_id, new_history)
-        render_final_chat_history(outer, new_history)
+        maybe_insert_response_cell(session_id, session_ctx, current_cell_id, final_text)
 
       {:error, err} ->
         Kino.Frame.render(body, Kino.Markdown.new("**Error**: #{inspect(err)}"))
@@ -157,22 +159,69 @@ defmodule Kino.PromptBuddy do
     put_history(current_cell_id, new_history)
   end
 
-  def history_markdown(chat_history) do
-    Enum.flat_map(chat_history, fn {u, a} ->
-      [
-        Kino.Markdown.new("**Buddy**:"),
-        Kino.Markdown.new(a),
-        Kino.Markdown.new("---"),
-        Kino.Markdown.new("**You**:"),
-        Kino.Markdown.new(u),
-        Kino.Markdown.new("---")
-      ]
-    end)
+  def insert_user_cell(session_id, current_cell_id, user_text, session_ctx \\ nil) do
+    maybe_insert_user_cell(session_id, session_ctx, current_cell_id, user_text)
   end
 
-  def render_final_chat_history(outer, new_history) do
-    Kino.Frame.render(outer, Kino.Layout.grid(history_markdown(new_history)))
+  defp maybe_insert_user_cell(nil, _session_ctx, _cell_id, _text), do: :ok
+  defp maybe_insert_user_cell(_session_id, _session_ctx, _cell_id, text) when text in [nil, ""], do: :ok
+
+  defp maybe_insert_user_cell(session_id, session_ctx, current_cell_id, user_text) do
+    trimmed = String.trim(user_text)
+
+    if trimmed == "" do
+      :ok
+    else
+      session_ctx = ensure_session_ctx(session_ctx, session_id)
+
+      case session_ctx do
+        {:ok, _node, _session} ->
+          CellInserter.insert_before(
+            session_ctx,
+            current_cell_id,
+            :markdown,
+            format_user_markdown(user_text)
+          )
+
+        _ ->
+          :ok
+      end
+    end
   end
+
+  defp maybe_insert_response_cell(nil, _session_ctx, _cell_id, _text), do: :ok
+
+  defp maybe_insert_response_cell(_session_id, _session_ctx, _cell_id, text) when text in [nil, ""], do: :ok
+
+  defp maybe_insert_response_cell(session_id, session_ctx, current_cell_id, final_text) do
+    session_ctx = ensure_session_ctx(session_ctx, session_id)
+
+    case session_ctx do
+      {:ok, _node, _session} ->
+        CellInserter.insert_before(
+          session_ctx,
+          current_cell_id,
+          :markdown,
+          format_buddy_markdown(final_text)
+        )
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp format_user_markdown(text),
+    do: "**User:**\n\n#{text || ""}"
+
+  defp format_buddy_markdown(text),
+    do: "**Buddy:**\n\n#{text || ""}"
+
+  defp ensure_session_ctx({:ok, _node, _session} = ctx, _session_id), do: ctx
+
+  defp ensure_session_ctx(_ctx, session_id) when is_binary(session_id),
+    do: Context.fetch_session(session_id)
+
+  defp ensure_session_ctx(_ctx, _), do: {:error, :invalid_session}
 
   # -------------------------------------------------------------
 
@@ -191,6 +240,18 @@ defmodule Kino.PromptBuddy do
       user_text = unquote(attrs["source"])
       smart_cell_pid = Process.whereis(:"promptbuddy_#{unquote(cell_id)}")
 
+      session_ctx =
+        case session_id do
+          nil ->
+            nil
+
+          _ ->
+            case Context.fetch_session(session_id) do
+              {:ok, _node, _session} = ctx -> ctx
+              _ -> nil
+            end
+        end
+
       import Kino.Shorts
       outer = frame()
       body = frame()
@@ -198,19 +259,8 @@ defmodule Kino.PromptBuddy do
       chat_history = Kino.PromptBuddy.get_history(current_cell_id)
       prompt_blank? = String.trim(user_text) == ""
 
-      previous_msgs = Kino.PromptBuddy.history_markdown(chat_history)
-      current_prompt_header = Kino.Markdown.new("**You**:")
-      current_prompt_body = Kino.Markdown.new(user_text)
-      buddy_header = Kino.Markdown.new("**Buddy**:")
-
-      # Render all previous messages plus current prompt and streaming area
-      Kino.Frame.render(
-        outer,
-        Kino.Layout.grid(
-          previous_msgs ++
-            [current_prompt_header, current_prompt_body, buddy_header, body]
-        )
-      )
+      # Render only the streaming area; historical conversation lives in inserted cells
+      Kino.Frame.render(outer, Kino.Layout.grid([body]))
 
       unless prompt_blank? do
         # Clear the editor after render and a small delay
@@ -220,6 +270,8 @@ defmodule Kino.PromptBuddy do
           if smart_cell_pid,
             do: send(smart_cell_pid, {:clear_editor, current_cell_id})
         end)
+
+        Kino.PromptBuddy.insert_user_cell(session_id, current_cell_id, user_text, session_ctx)
 
         system_msg =
           ReqLLM.Context.system("""
@@ -235,12 +287,9 @@ defmodule Kino.PromptBuddy do
           """)
 
         precedent_msgs =
-          case Context.get_notebook(session_id) do
-            {:ok, nb} ->
-              Context.build_precedent_messages(nb, current_cell_id)
-
-            _ ->
-              []
+          case Context.get_notebook_from_session(session_ctx) do
+            {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
+            _ -> []
           end
 
         history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
@@ -256,7 +305,9 @@ defmodule Kino.PromptBuddy do
             user_text,
             chat_history,
             current_cell_id,
-            n_every
+            n_every,
+            session_id,
+            session_ctx
           )
         end)
       end

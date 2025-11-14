@@ -5,6 +5,7 @@ defmodule KinoPromptBuddy.Application do
 
   @impl true
   def start(_type, _args) do
+    {:module, Kino.PromptBuddy} = Code.ensure_compiled(Kino.PromptBuddy)
     Kino.SmartCell.register(Kino.PromptBuddy)
     children = []
     opts = [strategy: :one_for_one, name: KinoPromptBuddy.Supervisor]

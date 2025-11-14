@@ -17,8 +17,14 @@ defmodule Kino.PromptBuddy.Context do
     end
   end
 
+  def get_notebook_from_session({:ok, node_norm, session}) do
+    {:ok, :erpc.call(node_norm, Livebook.Session, :get_notebook, [session.pid])}
+  end
 
-  defp fetch_session(session_id) when is_binary(session_id) do
+  def get_notebook_from_session(_), do: {:error, :invalid_session}
+
+
+  def fetch_session(session_id) when is_binary(session_id) do
     node_norm = normalized_node()
     Node.set_cookie(node_norm, Node.get_cookie())
     sessions = :erpc.call(node_norm, Livebook.Tracker, :list_sessions, [])
@@ -29,9 +35,9 @@ defmodule Kino.PromptBuddy.Context do
     end
   end
 
-  defp fetch_session(_), do: {:error, :invalid_session_id}
+  def fetch_session(_), do: {:error, :invalid_session_id}
 
-  defp normalized_node do
+  def normalized_node do
     node()
     |> Atom.to_string()
     |> String.replace(~r/--[^@]+@/, "@")
@@ -72,12 +78,12 @@ defmodule Kino.PromptBuddy.Context do
 
   def cell_to_messages(_), do: []
 
-  defp source_msg(src) when is_binary(src) do
+  def source_msg(src) when is_binary(src) do
     src = String.trim(src)
     if src == "", do: [], else: [ReqLLM.Context.user(src)]
   end
 
-  defp output_msgs(outs) when is_list(outs) do
+  def output_msgs(outs) when is_list(outs) do
     outs
     |> Enum.flat_map(fn
       # common Livebook text outputs
@@ -94,6 +100,6 @@ defmodule Kino.PromptBuddy.Context do
     end)
   end
 
-  defp clean_text(text),
+  def clean_text(text),
     do: text |> String.replace(~r/\e\[[\d;]*m/, "") |> String.trim()
 end
