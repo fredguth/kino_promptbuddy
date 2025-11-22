@@ -17,10 +17,8 @@ defmodule Kino.PromptBuddy.Context do
     end
   end
 
-  def get_notebook_from_session({:ok, node_norm, session}) do
-    {:ok, :erpc.call(node_norm, Livebook.Session, :get_notebook, [session.pid])}
-  end
-
+  def get_notebook_from_session({:ok, node_norm, session}),
+    do: {:ok, :erpc.call(node_norm, Livebook.Session, :get_notebook, [session.pid])}
   def get_notebook_from_session(_), do: {:error, :invalid_session}
 
 
@@ -50,10 +48,8 @@ defmodule Kino.PromptBuddy.Context do
   @cell_markdown :"Elixir.Livebook.Notebook.Cell.Markdown"
   @cell_smart    :"Elixir.Livebook.Notebook.Cell.Smart"
 
-  def build_precedent_messages(nb) when is_map(nb) do
-    current_cell_id = get_current_cell_id()              # <- fixed
-    build_precedent_messages(nb, current_cell_id)
-  end
+  def build_precedent_messages(nb) when is_map(nb),
+    do: build_precedent_messages(nb, get_current_cell_id())
 
   def build_precedent_messages(nb, current_cell_id) when is_map(nb) do
     nb
@@ -62,41 +58,30 @@ defmodule Kino.PromptBuddy.Context do
     |> Enum.flat_map(&cell_to_messages/1)
   end
 
-  defp all_cells(%{sections: secs}),
-    do: Enum.flat_map(secs, & &1.cells)
+  defp all_cells(%{sections: secs}), do: Enum.flat_map(secs, & &1.cells)
 
   def cell_to_messages(%{__struct__: @cell_code, source: src, outputs: outs}) do
     source_msg(src) ++ output_msgs(outs)
   end
 
   def cell_to_messages(%{__struct__: @cell_markdown, source: md}) do
-    # Parse markdown to detect if it's a Buddy response or user message
     md = String.trim(md)
 
     cond do
-      # Buddy response - starts with **Buddy:**
       String.starts_with?(md, "**Buddy:**") ->
         content = md |> String.replace_prefix("**Buddy:**", "") |> String.trim()
         if content == "", do: [], else: [ReqLLM.Context.assistant(content)]
 
-      # User message - starts with **User:**
       String.starts_with?(md, "**User:**") ->
         content = md |> String.replace_prefix("**User:**", "") |> String.trim()
         if content == "", do: [], else: [ReqLLM.Context.user(content)]
 
-      # Plain markdown (shouldn't happen with new code, but handle gracefully)
-      md != "" ->
-        [ReqLLM.Context.user(md)]
-
-      # Empty
-      true ->
-        []
+      md != "" -> [ReqLLM.Context.user(md)]
+      true -> []
     end
   end
 
-  def cell_to_messages(%{__struct__: @cell_smart, outputs: outs}),
-    do: output_msgs(outs)
-
+  def cell_to_messages(%{__struct__: @cell_smart, outputs: outs}), do: output_msgs(outs)
   def cell_to_messages(_), do: []
 
   def source_msg(src) when is_binary(src) do
@@ -105,22 +90,14 @@ defmodule Kino.PromptBuddy.Context do
   end
 
   def output_msgs(outs) when is_list(outs) do
-    outs
-    |> Enum.flat_map(fn
-      # common Livebook text outputs
-      {_id, %{type: :plain_text,    text: text}} -> [ReqLLM.Context.assistant(clean_text(text))]
+    Enum.flat_map(outs, fn
+      {_id, %{type: :plain_text, text: text}} -> [ReqLLM.Context.assistant(clean_text(text))]
       {_id, %{type: :terminal_text, text: text}} -> [ReqLLM.Context.assistant(clean_text(text))]
-
-      # generic text fallback (covers some Kinos)
-      {_id, %{text: text}}                       -> [ReqLLM.Context.assistant(clean_text(text))]
-
-      # nested outputs
-      {_id, %{outputs: nested}}                  -> output_msgs(nested)
-
+      {_id, %{text: text}} -> [ReqLLM.Context.assistant(clean_text(text))]
+      {_id, %{outputs: nested}} -> output_msgs(nested)
       _ -> []
     end)
   end
 
-  def clean_text(text),
-    do: text |> String.replace(~r/\e\[[\d;]*m/, "") |> String.trim()
+  def clean_text(text), do: text |> String.replace(~r/\e\[[\d;]*m/, "") |> String.trim()
 end

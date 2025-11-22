@@ -37,17 +37,12 @@ defmodule Kino.PromptBuddy do
     active_tab = attrs["active_tab"] || "prompt"
 
     # Register this Smart Cell process so generated code can find it
-    # Unregister first in case we're reinitializing
     try do
       Process.unregister(smart_cell_name(cell_id))
     rescue
       ArgumentError -> :ok
     end
-
     Process.register(self(), smart_cell_name(cell_id))
-
-    # Determine editor configuration based on active tab
-    editor_config = editor_config_for_tab(active_tab)
 
     {:ok,
      assign(ctx,
@@ -57,13 +52,8 @@ defmodule Kino.PromptBuddy do
        n_every: attrs["n_every"] || 24,
        cell_id: cell_id,
        active_tab: active_tab
-     ), editor: Keyword.merge([source: source, placement: :top], editor_config)}
+     ), editor: [source: source, placement: :top, language: "markdown"]}
   end
-
-  # All tabs use markdown editor - the differentiation is in:
-  # 1. Visual styling (CSS background colors via data-active-tab)
-  # 2. Cell insertion behavior (to_source_prompt/note/code)
-  defp editor_config_for_tab(_tab), do: [language: "markdown"]
 
   defp smart_cell_name(cell_id), do: :"promptbuddy_#{cell_id}"
 
@@ -84,13 +74,10 @@ defmodule Kino.PromptBuddy do
 
   @impl true
   def handle_event("set_session_id", session_url, ctx) do
-    # front end is the place where we ca find the session id (in the url)
-    session_id =
-      case Regex.run(~r{/sessions/([^/]+)/}, session_url) do
-        [_, id] -> id
-        _ -> nil
-      end
-
+    session_id = case Regex.run(~r{/sessions/([^/]+)/}, session_url) do
+      [_, id] -> id
+      _ -> nil
+    end
     {:noreply, assign(ctx, session_id: session_id)}
   end
 
@@ -109,9 +96,6 @@ defmodule Kino.PromptBuddy do
 
   @impl true
   def handle_event("tab_changed", %{"tab" => tab}, ctx) do
-    # Update the active tab in context
-    # Note: We cannot dynamically change editor language after initialization
-    # The editor configuration is set during init/2 and persisted via to_attrs/1
     {:noreply, assign(ctx, active_tab: tab)}
   end
 
@@ -249,14 +233,12 @@ defmodule Kino.PromptBuddy do
 
   defp update_cell_content(_, _cell_id, _text), do: :ok
 
-  defp maybe_insert_error_cell(nil, _session_ctx, _cell_id, _err), do: :ok
   defp maybe_insert_error_cell(_session_id, {:ok, node, session}, current_cell_id, err) do
-    error_text = "**Error**: #{inspect(err)}"
     CellInserter.insert_before(
       {:ok, node, session},
       current_cell_id,
       :markdown,
-      error_text
+      "**Error**: #{inspect(err)}"
     )
   end
   defp maybe_insert_error_cell(_, _, _, _), do: :ok
@@ -266,20 +248,8 @@ defmodule Kino.PromptBuddy do
   end
 
   def insert_user_cell(session_id, current_cell_id, user_text, session_ctx \\ nil) do
-    maybe_insert_user_cell(session_id, session_ctx, current_cell_id, user_text)
-  end
-
-  defp maybe_insert_user_cell(nil, _session_ctx, _cell_id, _text), do: :ok
-  defp maybe_insert_user_cell(_session_id, _session_ctx, _cell_id, text) when text in [nil, ""], do: :ok
-
-  defp maybe_insert_user_cell(session_id, session_ctx, current_cell_id, user_text) do
-    trimmed = String.trim(user_text)
-
-    if trimmed == "" do
-      :ok
-    else
+    if session_id && user_text && String.trim(user_text) != "" do
       session_ctx = ensure_session_ctx(session_ctx, session_id)
-
       case session_ctx do
         {:ok, _node, _session} ->
           CellInserter.insert_before(
@@ -288,20 +258,17 @@ defmodule Kino.PromptBuddy do
             :markdown,
             format_user_markdown(user_text)
           )
-
-        _ ->
-          :ok
+        _ -> :ok
       end
+    else
+      :ok
     end
   end
 
 
 
-  defp format_user_markdown(text),
-    do: "**User:**\n\n#{text || ""}"
-
-  defp format_buddy_markdown(text),
-    do: "**Buddy:**\n\n#{text || ""}"
+  defp format_user_markdown(text), do: "**User:**\n\n#{text || ""}"
+  defp format_buddy_markdown(text), do: "**Buddy:**\n\n#{text || ""}"
 
   defp ensure_session_ctx({:ok, _node, _session} = ctx, _session_id), do: ctx
 
@@ -339,9 +306,7 @@ defmodule Kino.PromptBuddy do
 
       session_ctx =
         case session_id do
-          nil ->
-            nil
-
+          nil -> nil
           _ ->
             case Context.fetch_session(session_id) do
               {:ok, _node, _session} = ctx -> ctx
@@ -350,15 +315,11 @@ defmodule Kino.PromptBuddy do
         end
 
       chat_history = Kino.PromptBuddy.get_history(current_cell_id)
-      prompt_blank? = String.trim(user_text) == ""
 
-      unless prompt_blank? do
-        # Clear the editor after render and a small delay
+      unless String.trim(user_text) == "" do
         Task.start(fn ->
           Process.sleep(100)
-
-          if smart_cell_pid,
-            do: send(smart_cell_pid, {:clear_editor, current_cell_id})
+          if smart_cell_pid, do: send(smart_cell_pid, {:clear_editor, current_cell_id})
         end)
 
         Kino.PromptBuddy.insert_user_cell(session_id, current_cell_id, user_text, session_ctx)
@@ -423,41 +384,32 @@ defmodule Kino.PromptBuddy do
       note_text = unquote(attrs["source"])
       smart_cell_pid = Process.whereis(:"promptbuddy_#{unquote(cell_id)}")
 
-      note_blank? = String.trim(note_text) == ""
-
-      unless note_blank? do
+      unless String.trim(note_text) == "" do
         # Clear the editor after render
         Task.start(fn ->
           Process.sleep(100)
-
-          if smart_cell_pid,
-            do: send(smart_cell_pid, {:clear_editor, current_cell_id})
+          if smart_cell_pid, do: send(smart_cell_pid, {:clear_editor, current_cell_id})
         end)
 
         session_ctx =
           case session_id do
             nil -> nil
-            _ ->
-              case Context.fetch_session(session_id) do
-                {:ok, _node, _session} = ctx -> ctx
-                _ -> nil
-              end
+            _ -> case Context.fetch_session(session_id) do
+              {:ok, _node, _session} = ctx -> ctx
+              _ -> nil
+            end
           end
 
         # Insert a markdown cell with the note content, prefixed with "User:"
-        formatted_note = "**User:**\n\n#{note_text}"
-
         case session_ctx do
           {:ok, _node, _session} ->
             Kino.PromptBuddy.CellInserter.insert_before(
               session_ctx,
               current_cell_id,
               :markdown,
-              formatted_note
+              "**User:**\n\n#{note_text}"
             )
-
-          _ ->
-            :ok
+          _ -> :ok
         end
       end
 
@@ -477,31 +429,25 @@ defmodule Kino.PromptBuddy do
       code_text = unquote(attrs["source"])
       smart_cell_pid = Process.whereis(:"promptbuddy_#{unquote(cell_id)}")
 
-      code_blank? = String.trim(code_text) == ""
-
-      unless code_blank? do
+      unless String.trim(code_text) == "" do
         # Clear the editor after render
         Task.start(fn ->
           Process.sleep(100)
-
-          if smart_cell_pid,
-            do: send(smart_cell_pid, {:clear_editor, current_cell_id})
+          if smart_cell_pid, do: send(smart_cell_pid, {:clear_editor, current_cell_id})
         end)
 
         session_ctx =
           case session_id do
             nil -> nil
-            _ ->
-              case Context.fetch_session(session_id) do
-                {:ok, _node, _session} = ctx -> ctx
-                _ -> nil
-              end
+            _ -> case Context.fetch_session(session_id) do
+              {:ok, _node, _session} = ctx -> ctx
+              _ -> nil
+            end
           end
 
         # Insert a label markdown cell first, then the code cell
         case session_ctx do
           {:ok, _node, _session} ->
-            # Insert label
             Kino.PromptBuddy.CellInserter.insert_before(
               session_ctx,
               current_cell_id,
@@ -509,16 +455,13 @@ defmodule Kino.PromptBuddy do
               "**Code:**"
             )
 
-            # Insert code cell
             Kino.PromptBuddy.CellInserter.insert_before(
               session_ctx,
               current_cell_id,
               :code,
               code_text
             )
-
-          _ ->
-            :ok
+          _ -> :ok
         end
       end
 
