@@ -97,6 +97,20 @@ defmodule Kino.PromptBuddy do
   end
 
   @impl true
+  def handle_event("tab_changed", %{"tab" => tab}, ctx) do
+    # Map tab to editor attributes
+    editor_attrs = case tab do
+      "prompt" -> %{language: "markdown", theme: "vs"}           # white bg
+      "code"   -> %{language: "elixir", theme: "vs-dark"}       # dark bg
+      "note"   -> %{language: "markdown", theme: "custom-note"} # beige bg
+    end
+
+    ctx = assign(ctx, active_tab: tab, editor_attrs: editor_attrs)
+    broadcast_event(ctx, "update_editor", editor_attrs)
+    {:noreply, ctx}
+  end
+
+  @impl true
   def handle_info({:clear_editor, cell_id}, ctx) do
     ctx =
       ctx
@@ -112,48 +126,135 @@ defmodule Kino.PromptBuddy do
   def handle_call(:get_session_id, _from, ctx),
     do: {:reply, ctx.assigns[:session_id], ctx}
 
+
   # -- Helper functions for to_source ------------------------------------------
 
   def stream_response_and_update_history(
         model,
         messages,
-        body,
-        _outer,
+        current_cell_id,
         user_text,
         chat_history,
-        current_cell_id,
         n_every,
         session_id,
         session_ctx \\ nil
       ) do
+    session_ctx = ensure_session_ctx(session_ctx, session_id)
+
     case ReqLLM.stream_text(model, messages) do
       {:ok, response} ->
-        final_text = handle_streaming_response(response, body, n_every)
+        final_text = handle_streaming_response(response, session_ctx, current_cell_id, n_every)
         new_history = [{user_text, final_text} | chat_history]
         update_chat_history(current_cell_id, new_history)
-        maybe_insert_response_cell(session_id, session_ctx, current_cell_id, final_text)
 
       {:error, err} ->
-        Kino.Frame.render(body, Kino.Markdown.new("**Error**: #{inspect(err)}"))
+        maybe_insert_error_cell(session_id, session_ctx, current_cell_id, err)
     end
   end
 
-  def handle_streaming_response(response, body, n_every) do
-    {final_text, _count} =
+  def handle_streaming_response(response, session_ctx, current_cell_id, n_every) do
+    # Insert a markdown cell for the assistant response
+    {:ok, response_cell_id} = insert_response_cell(session_ctx, current_cell_id)
+
+    # Wait a moment for the cell to be registered in session data
+    Process.sleep(50)
+
+    # Stream content into the cell with lazy evaluation using Text.Delta
+    final_text =
       response
       |> ReqLLM.StreamResponse.tokens()
-      |> Enum.reduce({"", 0}, fn token, {acc, n} ->
+      |> Stream.transform({"", 0}, fn token, {acc, n} ->
         new_text = acc <> token
 
         if rem(n + 1, n_every) == 0 do
-          Kino.Frame.render(body, Kino.Markdown.new(new_text))
+          update_cell_content(session_ctx, response_cell_id, new_text)
         end
 
-        {new_text, n + 1}
+        {[new_text], {new_text, n + 1}}
       end)
+      |> Enum.to_list()
+      |> List.last()
 
+    # Final update to ensure we have all the text
+    update_cell_content(session_ctx, response_cell_id, final_text)
     final_text
   end
+
+  defp insert_response_cell({:ok, _node, _session} = session_ctx, current_cell_id) do
+    # Insert a markdown cell for the assistant response
+    initial_content = format_buddy_markdown("")
+
+    CellInserter.insert_before(
+      session_ctx,
+      current_cell_id,
+      :markdown,
+      initial_content
+    )
+  end
+
+  defp insert_response_cell(_session_ctx, _current_cell_id) do
+    {:error, :no_session}
+  end
+
+  defp update_cell_content({:ok, node, session}, cell_id, text) do
+    formatted_text = format_buddy_markdown(text)
+
+    # Get the current cell info to get revision and current source length
+    data = :erpc.call(node, Livebook.Session, :get_data, [session.pid])
+
+    case data.cell_infos[cell_id] do
+      nil ->
+        # Cell not yet in session data, skip update
+        :ok
+
+      cell_info ->
+        source_info = cell_info.sources[:primary]
+
+        # Get current source by fetching the cell from the notebook
+        notebook = :erpc.call(node, Livebook.Session, :get_notebook, [session.pid])
+        current_cell =
+          notebook.sections
+          |> Enum.flat_map(& &1.cells)
+          |> Enum.find(&(&1.id == cell_id))
+
+        current_source = if current_cell, do: current_cell.source, else: ""
+        current_length = String.length(current_source)
+        revision = source_info.revision
+
+        # Create a delta that deletes old content and inserts new content
+        delta =
+          :erpc.call(node, Livebook.Text.Delta, :new, [])
+          |> then(fn d -> :erpc.call(node, Livebook.Text.Delta, :delete, [d, current_length]) end)
+          |> then(fn d -> :erpc.call(node, Livebook.Text.Delta, :insert, [d, formatted_text]) end)
+
+        # Create selection
+        selection = :erpc.call(node, Livebook.Text.Selection, :new, [[{0, 0}]])
+
+        # Apply the delta to update the cell content
+        :erpc.call(node, Livebook.Session, :apply_cell_delta, [
+          session.pid,
+          cell_id,
+          :primary,
+          delta,
+          selection,
+          revision
+        ])
+    end
+  end
+
+  defp update_cell_content(_, _cell_id, _text), do: :ok
+
+  defp maybe_insert_error_cell(nil, _session_ctx, _cell_id, _err), do: :ok
+  defp maybe_insert_error_cell(_session_id, {:ok, node, session}, current_cell_id, err) do
+    error_text = "**Error**: #{inspect(err)}"
+    CellInserter.insert_before(
+      {:ok, node, session},
+      current_cell_id,
+      :markdown,
+      error_text
+    )
+  end
+  defp maybe_insert_error_cell(_, _, _, _), do: :ok
 
   def update_chat_history(current_cell_id, new_history) do
     put_history(current_cell_id, new_history)
@@ -189,26 +290,7 @@ defmodule Kino.PromptBuddy do
     end
   end
 
-  defp maybe_insert_response_cell(nil, _session_ctx, _cell_id, _text), do: :ok
 
-  defp maybe_insert_response_cell(_session_id, _session_ctx, _cell_id, text) when text in [nil, ""], do: :ok
-
-  defp maybe_insert_response_cell(session_id, session_ctx, current_cell_id, final_text) do
-    session_ctx = ensure_session_ctx(session_ctx, session_id)
-
-    case session_ctx do
-      {:ok, _node, _session} ->
-        CellInserter.insert_before(
-          session_ctx,
-          current_cell_id,
-          :markdown,
-          format_buddy_markdown(final_text)
-        )
-
-      _ ->
-        :ok
-    end
-  end
 
   defp format_user_markdown(text),
     do: "**User:**\n\n#{text || ""}"
@@ -252,15 +334,8 @@ defmodule Kino.PromptBuddy do
             end
         end
 
-      import Kino.Shorts
-      outer = frame()
-      body = frame()
-
       chat_history = Kino.PromptBuddy.get_history(current_cell_id)
       prompt_blank? = String.trim(user_text) == ""
-
-      # Render only the streaming area; historical conversation lives in inserted cells
-      Kino.Frame.render(outer, Kino.Layout.grid([body]))
 
       unless prompt_blank? do
         # Clear the editor after render and a small delay
@@ -276,7 +351,7 @@ defmodule Kino.PromptBuddy do
         system_msg =
           ReqLLM.Context.system("""
           You are a patient pair-programming partner using **Polya's method** / **Socratic** style.
-          PRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.
+          PRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed. (4) When writing markdown only use headings level 3 or 4 (levels 1 and 2 are reserved.)
           """)
 
         prompt_msg =
@@ -297,22 +372,27 @@ defmodule Kino.PromptBuddy do
         messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
 
         Task.start(fn ->
-          Kino.PromptBuddy.stream_response_and_update_history(
-            model,
-            messages,
-            body,
-            outer,
-            user_text,
-            chat_history,
-            current_cell_id,
-            n_every,
-            session_id,
-            session_ctx
-          )
+          try do
+            Kino.PromptBuddy.stream_response_and_update_history(
+              model,
+              messages,
+              current_cell_id,
+              user_text,
+              chat_history,
+              n_every,
+              session_id,
+              session_ctx
+            )
+          rescue
+            e ->
+              IO.inspect(e, label: "ERROR in stream_response_and_update_history")
+              IO.inspect(__STACKTRACE__, label: "STACKTRACE")
+              reraise e, __STACKTRACE__
+          end
         end)
       end
 
-      outer
+      nil
       # ---------- /PromptBuddy UI ----------
     end
     |> Kino.SmartCell.quoted_to_string()
@@ -320,12 +400,19 @@ defmodule Kino.PromptBuddy do
 
   @impl true
   def to_attrs(ctx) do
+    editor = case ctx.assigns[:active_tab] || "prompt" do
+      "prompt" -> [language: "markdown", theme: "vs"]
+      "code"   -> [language: "elixir", theme: "vs-dark"]
+      "note"   -> [language: "markdown", theme: "vs"]
+    end
+
     %{
       "source" => ctx.assigns[:source],
       "session_id" => ctx.assigns[:session_id],
       "model" => ctx.assigns[:model],
       "n_every" => ctx.assigns[:n_every],
-      "cell_id" => ctx.assigns[:cell_id]
+      "cell_id" => ctx.assigns[:cell_id],
+      "editor" => editor
     }
   end
 end

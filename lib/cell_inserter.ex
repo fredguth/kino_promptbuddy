@@ -7,13 +7,20 @@ defmodule Kino.PromptBuddy.CellInserter do
   def insert_before({:ok, node, session}, current_cell_id, type, source) do
     with {:ok, notebook} <- {:ok, :erpc.call(node, Session, :get_notebook, [session.pid])},
          {:ok, section, index} <- fetch_section_and_index(notebook, current_cell_id) do
+
+      # Generate a cell ID before insertion
+      cell_id = :erpc.call(node, Livebook.Utils, :random_id, [])
+
+      # Insert the cell with the generated ID
       :erpc.call(node, Session, :insert_cell, [
         session.pid,
         section.id,
         index,
         type,
-        %{source: source}
+        %{id: cell_id, source: source}
       ])
+
+      {:ok, cell_id}
     end
   end
 
