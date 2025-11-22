@@ -70,7 +70,28 @@ defmodule Kino.PromptBuddy.Context do
   end
 
   def cell_to_messages(%{__struct__: @cell_markdown, source: md}) do
-    source_msg(md)
+    # Parse markdown to detect if it's a Buddy response or user message
+    md = String.trim(md)
+
+    cond do
+      # Buddy response - starts with **Buddy:**
+      String.starts_with?(md, "**Buddy:**") ->
+        content = md |> String.replace_prefix("**Buddy:**", "") |> String.trim()
+        if content == "", do: [], else: [ReqLLM.Context.assistant(content)]
+
+      # User message - starts with **User:**
+      String.starts_with?(md, "**User:**") ->
+        content = md |> String.replace_prefix("**User:**", "") |> String.trim()
+        if content == "", do: [], else: [ReqLLM.Context.user(content)]
+
+      # Plain markdown (shouldn't happen with new code, but handle gracefully)
+      md != "" ->
+        [ReqLLM.Context.user(md)]
+
+      # Empty
+      true ->
+        []
+    end
   end
 
   def cell_to_messages(%{__struct__: @cell_smart, outputs: outs}),

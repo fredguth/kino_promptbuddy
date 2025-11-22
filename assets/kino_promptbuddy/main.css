@@ -1,87 +1,178 @@
-.buddy-form {
-    font-family:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
-        sans-serif;
-    padding: 12px;
+/* Reset and remove default Kino padding */
+* {
+    box-sizing: border-box;
+}
+
+:root {
+    padding: 0 !important;
+    margin: 0;
     background: #f0eee6;
     border: 1px solid #d1d5db;
-    border-radius: 0px;
-    margin-bottom: 0px;
+    --editor-bg: #ffffff;
+    --editor-color: #1f2937;
 }
+
+/* Main container */
+.buddy-form {
+    display: flex;
+    flex-direction: column-reverse;
+    background: #f0eee6;
+    font-family:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    border-radius: 0px;
+    overflow: hidden;
+}
+
+/* Add colored top border to indicate active mode */
+.buddy-form[data-active-mode="prompt"] {
+    border-top: 4px solid #3b82f6;
+}
+
+.buddy-form[data-active-mode="note"] {
+    border-top: 4px solid #f59e0b;
+}
+
+.buddy-form[data-active-mode="code"] {
+    border-top: 4px solid #10b981;
+}
+
+/* Header area (tabs on left, model selector + hint on right) */
 .form-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: 12px;
+    padding: 0px 12px 12px 12px;
+    background: #f0eee6;
+    border-bottom: 1px solid #e5e7eb;
 }
-.header-title {
-    font-size: 16px;
-    font-weight: 700;
-    color: #1f2937;
-    margin: 0;
-    flex: 1;
+
+.form-header > :last-child {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-left: auto;
 }
+
+/* Model dropdown */
 .form-select {
-    min-width: 140px;
-    padding: 8px 32px 8px 12px;
-    font-size: 14px;
-    color: #1f2937;
-    background-color: #ffffff;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 10px center;
+    padding: 8px 12px 6px 12px;
     border: 1px solid #d1d5db;
     border-radius: 6px;
-    appearance: none;
+    font-size: 14px;
+    background: white;
     cursor: pointer;
-    transition: all 0.15s ease;
+    color: #374151;
 }
-.form-select:hover {
-    border-color: #9ca3af;
-    background-color: #f9fafb;
-}
+
 .form-select:focus {
     outline: none;
-    border-color: #2563eb;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
-.form-run {
-    --button-bg: #ba5b3b;
-    --button-text: #fff7f0;
-    --button-border: transparent;
-    --button-hover-bg: #a24d33;
-    --button-hover-text: #fff7f0;
-    --button-hover-border: transparent;
-    --button-focus-outline: rgba(186, 91, 59, 0.6);
-    --button-loading-color: #fefaf7;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--button-text);
-    background-color: var(--button-bg);
-    border: 1px solid var(--button-border);
-    border-radius: 5px;
+
+/* Shortcut hint */
+.hint {
+    font-size: 20px;
+    color: #9ca3af;
+    font-family: monospace;
+}
+
+/* Tabs container */
+.tabs {
+    display: flex;
+    gap: 2px;
+    background: transparent;
+}
+
+/* Tab buttons */
+.tab {
+    padding: 8px 16px;
+    background: #f0eee6;
+    border: none;
+    border-bottom: 3px solid transparent;
+    border-radius: 0 0 8px 8px;
     cursor: pointer;
-    transition:
-        background-color 0.15s ease,
-        transform 0.1s ease;
-}
-.form-run .hint {
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 500;
-    opacity: 0.85;
+    color: #6b7280;
+    transition: all 0.15s ease;
 }
-.form-run:hover {
-    background-color: var(--button-hover-bg);
-    color: var(--button-hover-text);
+
+.tab:hover:not(.active) {
+    background: #e5e7eb;
+    color: #374151;
 }
-.form-run:focus-visible {
-    outline: 2px solid var(--button-focus-outline);
-    outline-offset: 2px;
+
+/* Prompt tab - blue accent */
+/*.tab[data-tab="prompt"] {
+    border-bottom-color: #3b82f6;
+}*/
+
+.tab.active[data-tab="prompt"] {
+    background: white;
+    color: #1f2937;
+    border-bottom-color: #3b82f6;
 }
-.form-run:active {
-    transform: translateY(1px);
+
+/* Code tab - green accent */
+/*.tab[data-tab="code"] {
+    border-bottom-color: #10b981;
+}*/
+
+.tab.active[data-tab="code"] {
+    background: #1e1e1e;
+    color: #e5e7eb;
+    border-bottom-color: #10b981;
+}
+
+/* Note tab - amber accent */
+/*.tab[data-tab="note"] {
+    border-bottom-color: #f59e0b;
+}*/
+
+.tab.active[data-tab="note"] {
+    background: #eeeee1;
+    color: #374151;
+    border-bottom-color: #f59e0b;
+}
+
+/* Global styles that target editors based on CSS classes we'll inject */
+/* These classes will be added to the editor container element */
+
+/* Prompt mode - white background */
+.promptbuddy-mode-prompt .cm-editor,
+.promptbuddy-mode-prompt .cm-scroller,
+.promptbuddy-mode-prompt .cm-content,
+.promptbuddy-mode-prompt .cm-gutters,
+.promptbuddy-mode-prompt .cm-line,
+.promptbuddy-mode-prompt .cm-activeLineGutter {
+    background-color: white !important;
+    color: #1f2937 !important;
+}
+
+/* Code mode - dark background */
+.promptbuddy-mode-code .cm-editor,
+.promptbuddy-mode-code .cm-scroller,
+.promptbuddy-mode-code .cm-content,
+.promptbuddy-mode-code .cm-gutters,
+.promptbuddy-mode-code .cm-line,
+.promptbuddy-mode-code .cm-activeLineGutter {
+    background-color: #1e1e1e !important;
+    color: #d4d4d4 !important;
+}
+
+.promptbuddy-mode-code .cm-cursor {
+    border-left-color: #d4d4d4 !important;
+}
+
+/* Note mode - beige background */
+.promptbuddy-mode-note .cm-editor,
+.promptbuddy-mode-note .cm-scroller,
+.promptbuddy-mode-note .cm-content,
+.promptbuddy-mode-note .cm-gutters,
+.promptbuddy-mode-note .cm-line,
+.promptbuddy-mode-note .cm-activeLineGutter {
+    background-color: #eeeee1 !important;
+    color: #374151 !important;
 }

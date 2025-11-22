@@ -1,0 +1,1829 @@
+# Improving PromptBuddy
+
+```elixir
+Mix.install([
+  {:kino_promptbuddy, path: Path.join(__DIR__, "..")},
+  {:kino, "~>0.17.0"},
+  {:mix_install_watcher, "~> 0.1.0"}
+])
+```
+
+## Plan
+
+1. Add JS-side tab UI (Prompt/Note/Code) plus events so the backend can track tab state.
+2. Extend `Kino.PromptBuddy` assigns/storage to keep per-tab text and the active tab (`init`, `handle_event`, `to_attrs`).
+3. Update `handle_editor_change` and editor config to switch language/source per tab.
+4. Adjust `to_source/1` so only Prompt text runs through the LLM while Note/Code remain local data.
+5. Insert optional Note/Code cells (markdown/elixir) when running a prompt so those tabs materialize in the notebook.
+
+<!-- livebook:{"break_markdown":true} -->
+
+Let's start with:
+
+* Add JS-side tab UI (Prompt/Note/Code) plus events so the backend can track tab state.
+
+```/Users/fredguth/Code/elixir/kino_buddy/assets/kino_promptbuddy/main.js
+const MODEL_OPTIONS = [
+  { value: "sonnet", label: "Sonnet" },
+  { value: "haiku", label: "Haiku" },
+  { value: "opus", label: "Opus" },
+];
+
+const DEFAULT_MODEL = "sonnet";
+const isMac =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad/.test(navigator.platform ?? "");
+const SHORTCUT_HINT = isMac ? "⌘↩" : "Ctrl↩";
+
+export function init(ctx, payload) {
+  ctx.importCSS("main.css");
+  ctx.root.innerHTML = renderForm();
+  ctx.pushEvent("set_session_id", document.baseURI);
+
+  setupModelSelect(ctx, payload);
+
+  ctx.handleEvent("focus_editor", () => {
+    // Focus the editor after clearing
+    setTimeout(() => {
+      const editor = document.querySelector(
+        ".cell--code.cell--evaluating + .cell--code textarea, .cell--code textarea",
+      );
+      if (editor) {
+        editor.focus();
+      }
+    }, 100);
+  });
+}
+
+function setupModelSelect(ctx, payload) {
+  const modelSelect = ctx.root.querySelector(".form-select");
+  if (!modelSelect) return;
+
+  modelSelect.value = modelKeyFromPayload(payload);
+  modelSelect.addEventListener("change", (event) => {
+    ctx.pushEvent("update_model", event.target.value);
+  });
+}
+
+function modelKeyFromPayload(payload) {
+  const model = payload?.model;
+  if (!model) return DEFAULT_MODEL;
+
+  const matched = MODEL_OPTIONS.find(({ value }) => model.includes(value));
+  return matched?.value ?? DEFAULT_MODEL;
+}
+
+function renderForm() {
+  const options = MODEL_OPTIONS.map(
+    ({ value, label }) =>
+      `<option value="${value}"${
+        value === DEFAULT_MODEL ? " selected" : ""
+      }>${label}</option>`,
+  ).join("");
+
+  return `
+    <div class="buddy-form">
+      <div class="form-header">
+        <h3 class="header-title">Prompt Buddy</h3>
+        <select class="form-select" aria-label="Select model">
+          ${options}
+        </select>
+          <span class="hint">${SHORTCUT_HINT}</span>
+      </div>
+    </div>
+  `;
+}
+```
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+What are the next steps?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Looking at the current code, here are the next steps to add tab UI with state tracking:
+
+**Next Steps:**
+
+1. **Add tab HTML** to `renderForm()` – three buttons (Prompt/Note/Code) above the editor area
+2. **Track active tab** in JS state (start with "prompt")
+3. **Wire click handlers** on tab buttons to send `"tab_changed"` event to backend
+4. **Visual feedback** – add/remove an `active` class on the clicked tab
+
+**Question for you:**
+
+Should the tabs appear:
+
+* A) Above the model selector header?
+* B) Below the model selector, as a separate row?
+* C) Integrated into the header row alongside the model dropdown?
+
+(Option B is cleanest visually – keeps the header simple and tabs clearly separate.)
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+C) Instead of "Prompt Buddy" there should be tabs to define if the editor is a "prompt", "code", "Note".  I think the tabs should be upside down, as to look like something connected to the editor.
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Perfect! "Upside-down" tabs (border on bottom, rounded top corners) will look like they're attached to the editor below.
+
+**Next step:**
+
+Replace the `<h3 class="header-title">` with three tab buttons in `renderForm()`:
+
+```js
+function renderForm() {
+  const options = MODEL_OPTIONS.map(
+    ({ value, label }) =>
+      `<option value="${value}"${
+        value === DEFAULT_MODEL ? " selected" : ""
+      }>${label}</option>`,
+  ).join("");
+
+  return `
+    <div class="buddy-form">
+      <div class="form-header">
+        <div class="tabs">
+          <button class="tab active" data-tab="prompt">Prompt</button>
+          <button class="tab" data-tab="note">Note</button>
+          <button class="tab" data-tab="code">Code</button>
+        </div>
+        <select class="form-select" aria-label="Select model">
+          ${options}
+        </select>
+        <span class="hint">${SHORTCUT_HINT}</span>
+      </div>
+    </div>
+  `;
+}
+```
+
+**Question:**
+
+Should I also add the click handlers + state tracking in `init()` now, or CSS styling first?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+Let's go to the CSS
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Perfect! Let's style the upside-down tabs to connect visually with the editor below.
+
+**Next step:**
+
+Add tab CSS with rounded **top** corners, border on **bottom** for active state:
+
+```css
+/* Add to main.css */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.tab {
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.tab.active {
+  background: white;
+  border-bottom-color: #3b82f6;
+  color: #1f2937;
+}
+
+.form-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+}
+```
+
+**Question:**
+
+Should the active tab's border-bottom color match the current primary blue (`#3b82f6`), or would you prefer it to blend with the editor background (make it invisible/white)?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+blend with editor background.  We should have the editor have different colors of background for different inputs. Prompt is white background. Code is black background and Note could be the same color as the cell header (beige?)
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Perfect! Tabs blend into editor backgrounds with themed colors.
+
+**Next step:**
+
+Update CSS with background-matching borders and add data attributes for theming:
+
+```css
+/* Replace/update in main.css */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.tab {
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border: none;
+  border-bottom: 2px solid #e5e7eb;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+/* Prompt tab (white editor) */
+.tab.active[data-tab="prompt"] {
+  background: white;
+  border-bottom-color: white;
+  color: #1f2937;
+}
+
+/* Code tab (black editor) */
+.tab.active[data-tab="code"] {
+  background: #1e1e1e;
+  border-bottom-color: #1e1e1e;
+  color: #e5e7eb;
+}
+
+/* Note tab (beige editor) */
+.tab.active[data-tab="note"] {
+  background: #fef3c7;
+  border-bottom-color: #fef3c7;
+  color: #92400e;
+}
+```
+
+**Question:**
+
+Should the editor area itself also receive a class or data attribute (e.g., `data-editor-theme="prompt"`) so we can style it to match the active tab?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+The css is wrong.  The tab whould be upside down and connected to the bottom of the editor. Top of the [header? what is the name of this area?]
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Ah! You're right - I misunderstood. The tabs should be at the **bottom** of the editor area (upside-down = rounded **bottom** corners, border on **top**).
+
+**Next step:**
+
+Move tabs below editor area with correct orientation:
+
+```css
+/* Update in main.css */
+
+.buddy-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px;
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+  order: 1; /* Model selector at top */
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  order: 3; /* Tabs at bottom */
+}
+
+.tab {
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border: none;
+  border-top: 2px solid #e5e7eb;
+  border-radius: 0 0 8px 8px; /* Rounded BOTTOM corners */
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.tab.active[data-tab="prompt"] {
+  background: white;
+  border-top-color: white;
+  color: #1f2937;
+}
+
+.tab.active[data-tab="code"] {
+  background: #1e1e1e;
+  border-top-color: #1e1e1e;
+  color: #e5e7eb;
+}
+
+.tab.active[data-tab="note"] {
+  background: #fef3c7;
+  border-top-color: #fef3c7;
+  color: #92400e;
+}
+```
+
+**Question:**
+
+What's the `order: 2` element? (The editor area itself - where does it render in your HTML structure?)
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+I was talking about the root.  It shouldn't have padding, so that the buddy-form can touch the top of root (bottom of editor)
+
++----------------------+
+|    editor            |
++----------------------+
+| | Prompt| ....       |
+| +_______+            |
+|______________________+
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Perfect! The tabs need to visually connect to the editor above by removing root padding.
+
+**Next step:**
+
+Remove root padding and adjust buddy-form positioning:
+
+```css
+/* Add/update in main.css */
+
+:root {
+  padding: 0 !important; /* Remove default Kino padding */
+}
+
+.buddy-form {
+  display: flex;
+  flex-direction: column-reverse; /* Tabs first, then header */
+  background: white;
+}
+
+.form-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px;
+  background: white;
+  border-top: 1px solid #e5e7eb; /* Border on TOP now */
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px; /* Side padding only */
+}
+
+.tab {
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border: none;
+  border-top: 2px solid #e5e7eb;
+  border-radius: 0 0 8px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.2s;
+}
+```
+
+**Question:**
+
+Should the tabs have a subtle shadow/elevation to lift them visually, or keep them flat?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+rewrite the whole main.css
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+```css
+/* Reset and remove default Kino padding */
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  padding: 0 !important;
+  margin: 0;
+}
+
+/* Main container */
+.buddy-form {
+  display: flex;
+  flex-direction: column-reverse;
+  background: white;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Header area (model selector + hint) */
+.form-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px;
+  background: white;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* Model dropdown */
+.form-select {
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+  color: #374151;
+}
+
+.form-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Shortcut hint */
+.hint {
+  font-size: 12px;
+  color: #9ca3af;
+  font-family: monospace;
+}
+
+/* Tabs container */
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  background: transparent;
+}
+
+/* Tab buttons */
+.tab {
+  padding: 8px 16px;
+  background: #f3f4f6;
+  border: none;
+  border-top: 2px solid transparent;
+  border-radius: 0 0 8px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.15s ease;
+}
+
+.tab:hover:not(.active) {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+/* Active tab states - blend with editor background */
+.tab.active[data-tab="prompt"] {
+  background: white;
+  border-top-color: white;
+  color: #1f2937;
+}
+
+.tab.active[data-tab="code"] {
+  background: #1e1e1e;
+  border-top-color: #1e1e1e;
+  color: #e5e7eb;
+}
+
+.tab.active[data-tab="note"] {
+  background: #fef3c7;
+  border-top-color: #fef3c7;
+  color: #92400e;
+}
+```
+
+**Question:**
+
+Ready to add the JS click handlers to switch tabs and send events to the backend?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+It is missing the #f0eee6 background to :root also, the tabs should be on the left and the select to the right
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+```css
+/* Reset and remove default Kino padding */
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  padding: 0 !important;
+  margin: 0;
+  background: #f0eee6;
+}
+
+/* Main container */
+.buddy-form {
+  display: flex;
+  flex-direction: column-reverse;
+  background: #f0eee6;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Header area (tabs on left, model selector + hint on right) */
+.form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  background: #f0eee6;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* Model dropdown */
+.form-select {
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+  color: #374151;
+}
+
+.form-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Shortcut hint */
+.hint {
+  font-size: 12px;
+  color: #9ca3af;
+  font-family: monospace;
+}
+
+/* Tabs container */
+.tabs {
+  display: flex;
+  gap: 2px;
+  background: transparent;
+}
+
+/* Tab buttons */
+.tab {
+  padding: 8px 16px;
+  background: #f3f4f6;
+  border: none;
+  border-top: 2px solid transparent;
+  border-radius: 0 0 8px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.15s ease;
+}
+
+.tab:hover:not(.active) {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+/* Active tab states - blend with editor background */
+.tab.active[data-tab="prompt"] {
+  background: white;
+  border-top-color: white;
+  color: #1f2937;
+}
+
+.tab.active[data-tab="code"] {
+  background: #1e1e1e;
+  border-top-color: #1e1e1e;
+  color: #e5e7eb;
+}
+
+.tab.active[data-tab="note"] {
+  background: #fef3c7;
+  border-top-color: #fef3c7;
+  color: #92400e;
+}
+```
+
+**Question:**
+
+Ready to add the tab click handlers in `main.js` to track active tab and send `"tab_changed"` events to the backend?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+It changed. The selector should be on the right wile the tabs keep in the left. Every tab should have a color to make it different (a colored border )
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+```css
+/* Reset and remove default Kino padding */
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  padding: 0 !important;
+  margin: 0;
+  background: #f0eee6;
+}
+
+/* Main container */
+.buddy-form {
+  display: flex;
+  flex-direction: column-reverse;
+  background: #f0eee6;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Header area (tabs on left, model selector + hint on right) */
+.form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  background: #f0eee6;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* Right side controls */
+.form-header > :last-child {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+
+/* Model dropdown */
+.form-select {
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+  color: #374151;
+}
+
+.form-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Shortcut hint */
+.hint {
+  font-size: 12px;
+  color: #9ca3af;
+  font-family: monospace;
+}
+
+/* Tabs container */
+.tabs {
+  display: flex;
+  gap: 2px;
+  background: transparent;
+}
+
+/* Tab buttons */
+.tab {
+  padding: 8px 16px;
+  background: #f3f4f6;
+  border: none;
+  border-top: 3px solid transparent;
+  border-radius: 0 0 8px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.15s ease;
+}
+
+.tab:hover:not(.active) {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+/* Prompt tab - blue accent */
+.tab[data-tab="prompt"] {
+  border-top-color: #3b82f6;
+}
+
+.tab.active[data-tab="prompt"] {
+  background: white;
+  color: #1f2937;
+  border-top-color: #3b82f6;
+}
+
+/* Code tab - green accent */
+.tab[data-tab="code"] {
+  border-top-color: #10b981;
+}
+
+.tab.active[data-tab="code"] {
+  background: #1e1e1e;
+  color: #e5e7eb;
+  border-top-color: #10b981;
+}
+
+/* Note tab - amber accent */
+.tab[data-tab="note"] {
+  border-top-color: #f59e0b;
+}
+
+.tab.active[data-tab="note"] {
+  background: #fef3c7;
+  color: #92400e;
+  border-top-color: #f59e0b;
+}
+```
+
+**Question:**
+
+Should I now update `renderForm()` to wrap the select + hint in a container div for proper layout?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+We are almost there. I just dont get why tthe model selector is not on the right
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+I just don't get why the model selector is not in the right.  Also, it should appear only when we are in the prompt tab active.
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Ah! The selector needs proper HTML structure. Let me fix `renderForm()`:
+
+```js
+function renderForm() {
+  const options = MODEL_OPTIONS.map(
+    ({ value, label }) =>
+      `<option value="${value}"${
+        value === DEFAULT_MODEL ? " selected" : ""
+      }>${label}</option>`,
+  ).join("");
+
+  return `
+    <div class="buddy-form">
+      <div class="form-header">
+        <div class="tabs">
+          <button class="tab active" data-tab="prompt">Prompt</button>
+          <button class="tab" data-tab="note">Note</button>
+          <button class="tab" data-tab="code">Code</button>
+        </div>
+        <div class="controls">
+          <select class="form-select" aria-label="Select model">
+            ${options}
+          </select>
+          <span class="hint">${SHORTCUT_HINT}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+```
+
+And update CSS:
+
+```css
+.controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Hide controls when not on prompt tab */
+.buddy-form:not([data-active-tab="prompt"]) .controls {
+  display: none;
+}
+```
+
+**Question:**
+
+Should I add the JS to toggle `data-active-tab` attribute on `.buddy-form` when tabs are clicked?
+
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQuNSIsIm5fZXZlcnkiOjI0LCJzZXNzaW9uX2lkIjoiMzU2bWRndGdsZWtkaWJ4cGljeGdwZ2Q0NWlsYTNudHoyNWh6bDdkc3B3dGRnM3c3Iiwic291cmNlIjoiIn0","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+
+```elixir
+alias Kino.PromptBuddy.Context
+model = "openrouter:anthropic/claude-sonnet-4.5"
+n_every = 24
+session_id = "356mdgtglekdibxpicxgpgd45ila3ntz25hzl7dspwtdg3w7"
+current_cell_id = Context.get_current_cell_id()
+user_text = ""
+smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
+
+session_ctx =
+  case session_id do
+    nil ->
+      nil
+
+    _ ->
+      case Context.fetch_session(session_id) do
+        {:ok, _node, _session} = ctx -> ctx
+        _ -> nil
+      end
+  end
+
+import Kino.Shorts
+outer = frame()
+body = frame()
+chat_history = Kino.PromptBuddy.get_history(current_cell_id)
+prompt_blank? = String.trim(user_text) == ""
+Kino.Frame.render(outer, Kino.Layout.grid([body]))
+
+unless prompt_blank? do
+  Task.start(fn ->
+    Process.sleep(100)
+
+    if smart_cell_pid do
+      send(smart_cell_pid, {:clear_editor, current_cell_id})
+    end
+  end)
+
+  Kino.PromptBuddy.insert_user_cell(session_id, current_cell_id, user_text, session_ctx)
+
+  system_msg =
+    ReqLLM.Context.system(
+      "You are a patient pair-programming partner using **Polya's method** / **Socratic** style.\nPRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.\n"
+    )
+
+  prompt_msg = ReqLLM.Context.user("--- BEGIN PROMPT ---
+#{user_text}
+--- END PROMPT ---
+")
+
+  precedent_msgs =
+    case Context.get_notebook_from_session(session_ctx) do
+      {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
+      _ -> []
+    end
+
+  history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
+  messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+
+  Task.start(fn ->
+    Kino.PromptBuddy.stream_response_and_update_history(
+      model,
+      messages,
+      body,
+      outer,
+      user_text,
+      chat_history,
+      current_cell_id,
+      n_every,
+      session_id,
+      session_ctx
+    )
+  end)
+end
+
+outer
+```
+
+**User:**
+
+how can tabs only show the colored border on hover or active?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+```css
+/* Tab buttons - no border by default */
+.tab {
+  padding: 8px 16px;
+  background: #f3f4f6;
+  border: none;
+  border-top: 3px solid transparent;
+  border-radius: 0 0 8px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.15s ease;
+}
+
+/* Show colored border on hover */
+.tab[data-tab="prompt"]:hover {
+  border-top-color: #3b82f6;
+}
+
+.tab[data-tab="code"]:hover {
+  border-top-color: #10b981;
+}
+
+.tab[data-tab="note"]:hover {
+  border-top-color: #f59e0b;
+}
+
+/* Show colored border when active */
+.tab.active[data-tab="prompt"] {
+  background: white;
+  color: #1f2937;
+  border-top-color: #3b82f6;
+}
+
+.tab.active[data-tab="code"] {
+  background: #1e1e1e;
+  color: #e5e7eb;
+  border-top-color: #10b981;
+}
+
+.tab.active[data-tab="note"] {
+  background: #fef3c7;
+  color: #92400e;
+  border-top-color: #f59e0b;
+}
+```
+
+**Question:**
+
+Ready to add the click handlers in `main.js` to switch active tabs and send events to backend?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+```main.css
+/* Reset and remove default Kino padding */
+* {
+    box-sizing: border-box;
+}
+
+:root {
+    padding: 0 !important;
+    margin: 0;
+    background: #f0eee6;
+}
+
+/* Main container */
+.buddy-form {
+    display: flex;
+    flex-direction: column-reverse;
+    background: #f0eee6;
+    font-family:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Header area (tabs on left, model selector + hint on right) */
+.form-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0px 12px 12px 12px;
+    background: #f0eee6;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.form-header > :last-child {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-left: auto;
+}
+
+/* Model dropdown */
+.form-select {
+    padding: 6px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    background: white;
+    cursor: pointer;
+    color: #374151;
+}
+
+.form-select:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Shortcut hint */
+.hint {
+    font-size: 20px;
+    color: #9ca3af;
+    font-family: monospace;
+}
+
+/* Tabs container */
+.tabs {
+    display: flex;
+    gap: 2px;
+    background: transparent;
+}
+
+/* Tab buttons */
+.tab {
+    padding: 8px 16px;
+    background: #f0eee6;
+    border: none;
+    border-bottom: 3px solid transparent;
+    border-radius: 0 0 8px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: #6b7280;
+    transition: all 0.15s ease;
+}
+
+.tab:hover:not(.active) {
+    background: #e5e7eb;
+    color: #374151;
+}
+
+/* Prompt tab - blue accent */
+.tab[data-tab="prompt"] {
+    border-bottom-color: #3b82f6;
+}
+
+.tab.active[data-tab="prompt"] {
+    background: white;
+    color: #1f2937;
+    border-bottom-color: #3b82f6;
+}
+
+/* Code tab - green accent */
+.tab[data-tab="code"] {
+    border-bottom-color: #10b981;
+}
+
+.tab.active[data-tab="code"] {
+    background: #1e1e1e;
+    color: #e5e7eb;
+    border-bottom-color: #10b981;
+}
+
+/* Note tab - amber accent */
+.tab[data-tab="note"] {
+    border-bottom-color: #f59e0b;
+}
+
+.tab.active[data-tab="note"] {
+    background: #fef3c7;
+    color: #92400e;
+    border-bottom-color: #f59e0b;
+}
+```
+
+show border-bottom-color in tabs only when hovering or active.  Show me only what to change.
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+**Change only these lines:**
+
+```css
+/* Remove these 3 blocks: */
+.tab[data-tab="prompt"] {
+    border-bottom-color: #3b82f6;
+}
+
+.tab[data-tab="code"] {
+    border-bottom-color: #10b981;
+}
+
+.tab[data-tab="note"] {
+    border-bottom-color: #f59e0b;
+}
+
+/* Add these instead: */
+.tab[data-tab="prompt"]:hover:not(.active) {
+    border-bottom-color: #3b82f6;
+}
+
+.tab[data-tab="code"]:hover:not(.active) {
+    border-bottom-color: #10b981;
+}
+
+.tab[data-tab="note"]:hover:not(.active) {
+    border-bottom-color: #f59e0b;
+}
+```
+
+**Question:**
+
+Ready to add tab click handlers in JS now?
+
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQuNSIsIm5fZXZlcnkiOjI0LCJzZXNzaW9uX2lkIjoiMzU2bWRndGdsZWtkaWJ4cGljeGdwZ2Q0NWlsYTNudHoyNWh6bDdkc3B3dGRnM3c3Iiwic291cmNlIjoiYGBgbWFpbi5jc3Ncbi8qIFJlc2V0IGFuZCByZW1vdmUgZGVmYXVsdCBLaW5vIHBhZGRpbmcgKi9cbioge1xuICAgIGJveC1zaXppbmc6IGJvcmRlci1ib3g7XG59XG5cbjpyb290IHtcbiAgICBwYWRkaW5nOiAwICFpbXBvcnRhbnQ7XG4gICAgbWFyZ2luOiAwO1xuICAgIGJhY2tncm91bmQ6ICNmMGVlZTY7XG59XG5cbi8qIE1haW4gY29udGFpbmVyICovXG4uYnVkZHktZm9ybSB7XG4gICAgZGlzcGxheTogZmxleDtcbiAgICBmbGV4LWRpcmVjdGlvbjogY29sdW1uLXJldmVyc2U7XG4gICAgYmFja2dyb3VuZDogI2YwZWVlNjtcbiAgICBmb250LWZhbWlseTpcbiAgICAgICAgLWFwcGxlLXN5c3RlbSwgQmxpbmtNYWNTeXN0ZW1Gb250LCBcIlNlZ29lIFVJXCIsIFJvYm90bywgc2Fucy1zZXJpZjtcbn1cblxuLyogSGVhZGVyIGFyZWEgKHRhYnMgb24gbGVmdCwgbW9kZWwgc2VsZWN0b3IgKyBoaW50IG9uIHJpZ2h0KSAqL1xuLmZvcm0taGVhZGVyIHtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGFsaWduLWl0ZW1zOiBjZW50ZXI7XG4gICAganVzdGlmeS1jb250ZW50OiBzcGFjZS1iZXR3ZWVuO1xuICAgIGdhcDogMTJweDtcbiAgICBwYWRkaW5nOiAwcHggMTJweCAxMnB4IDEycHg7XG4gICAgYmFja2dyb3VuZDogI2YwZWVlNjtcbiAgICBib3JkZXItYm90dG9tOiAxcHggc29saWQgI2U1ZTdlYjtcbn1cblxuLmZvcm0taGVhZGVyID4gOmxhc3QtY2hpbGQge1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgZ2FwOiA4cHg7XG4gICAgYWxpZ24taXRlbXM6IGNlbnRlcjtcbiAgICBtYXJnaW4tbGVmdDogYXV0bztcbn1cblxuLyogTW9kZWwgZHJvcGRvd24gKi9cbi5mb3JtLXNlbGVjdCB7XG4gICAgcGFkZGluZzogNnB4IDEycHg7XG4gICAgYm9yZGVyOiAxcHggc29saWQgI2QxZDVkYjtcbiAgICBib3JkZXItcmFkaXVzOiA2cHg7XG4gICAgZm9udC1zaXplOiAxNHB4O1xuICAgIGJhY2tncm91bmQ6IHdoaXRlO1xuICAgIGN1cnNvcjogcG9pbnRlcjtcbiAgICBjb2xvcjogIzM3NDE1MTtcbn1cblxuLmZvcm0tc2VsZWN0OmZvY3VzIHtcbiAgICBvdXRsaW5lOiBub25lO1xuICAgIGJvcmRlci1jb2xvcjogIzNiODJmNjtcbiAgICBib3gtc2hhZG93OiAwIDAgMCAzcHggcmdiYSg1OSwgMTMwLCAyNDYsIDAuMSk7XG59XG5cbi8qIFNob3J0Y3V0IGhpbnQgKi9cbi5oaW50IHtcbiAgICBmb250LXNpemU6IDIwcHg7XG4gICAgY29sb3I6ICM5Y2EzYWY7XG4gICAgZm9udC1mYW1pbHk6IG1vbm9zcGFjZTtcbn1cblxuLyogVGFicyBjb250YWluZXIgKi9cbi50YWJzIHtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGdhcDogMnB4O1xuICAgIGJhY2tncm91bmQ6IHRyYW5zcGFyZW50O1xufVxuXG4vKiBUYWIgYnV0dG9ucyAqL1xuLnRhYiB7XG4gICAgcGFkZGluZzogOHB4IDE2cHg7XG4gICAgYmFja2dyb3VuZDogI2YwZWVlNjtcbiAgICBib3JkZXI6IG5vbmU7XG4gICAgYm9yZGVyLWJvdHRvbTogM3B4IHNvbGlkIHRyYW5zcGFyZW50O1xuICAgIGJvcmRlci1yYWRpdXM6IDAgMCA4cHggOHB4O1xuICAgIGN1cnNvcjogcG9pbnRlcjtcbiAgICBmb250LXNpemU6IDE0cHg7XG4gICAgZm9udC13ZWlnaHQ6IDUwMDtcbiAgICBjb2xvcjogIzZiNzI4MDtcbiAgICB0cmFuc2l0aW9uOiBhbGwgMC4xNXMgZWFzZTtcbn1cblxuLnRhYjpob3Zlcjpub3QoLmFjdGl2ZSkge1xuICAgIGJhY2tncm91bmQ6ICNlNWU3ZWI7XG4gICAgY29sb3I6ICMzNzQxNTE7XG59XG5cbi8qIFByb21wdCB0YWIgLSBibHVlIGFjY2VudCAqL1xuLnRhYltkYXRhLXRhYj1cInByb21wdFwiXSB7XG4gICAgYm9yZGVyLWJvdHRvbS1jb2xvcjogIzNiODJmNjtcbn1cblxuLnRhYi5hY3RpdmVbZGF0YS10YWI9XCJwcm9tcHRcIl0ge1xuICAgIGJhY2tncm91bmQ6IHdoaXRlO1xuICAgIGNvbG9yOiAjMWYyOTM3O1xuICAgIGJvcmRlci1ib3R0b20tY29sb3I6ICMzYjgyZjY7XG59XG5cbi8qIENvZGUgdGFiIC0gZ3JlZW4gYWNjZW50ICovXG4udGFiW2RhdGEtdGFiPVwiY29kZVwiXSB7XG4gICAgYm9yZGVyLWJvdHRvbS1jb2xvcjogIzEwYjk4MTtcbn1cblxuLnRhYi5hY3RpdmVbZGF0YS10YWI9XCJjb2RlXCJdIHtcbiAgICBiYWNrZ3JvdW5kOiAjMWUxZTFlO1xuICAgIGNvbG9yOiAjZTVlN2ViO1xuICAgIGJvcmRlci1ib3R0b20tY29sb3I6ICMxMGI5ODE7XG59XG5cbi8qIE5vdGUgdGFiIC0gYW1iZXIgYWNjZW50ICovXG4udGFiW2RhdGEtdGFiPVwibm90ZVwiXSB7XG4gICAgYm9yZGVyLWJvdHRvbS1jb2xvcjogI2Y1OWUwYjtcbn1cblxuLnRhYi5hY3RpdmVbZGF0YS10YWI9XCJub3RlXCJdIHtcbiAgICBiYWNrZ3JvdW5kOiAjZmVmM2M3O1xuICAgIGNvbG9yOiAjOTI0MDBlO1xuICAgIGJvcmRlci1ib3R0b20tY29sb3I6ICNmNTllMGI7XG59XG5gYGBcbnNob3cgYm9yZGVyLWJvdHRvbS1jb2xvciBpbiB0YWJzIG9ubHkgd2hlbiBob3ZlcmluZyBvciBhY3RpdmUuICBTaG93IG1lIG9ubHkgd2hhdCB0byBjaGFuZ2UuIn0","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+
+````elixir
+alias Kino.PromptBuddy.Context
+model = "openrouter:anthropic/claude-sonnet-4.5"
+n_every = 24
+session_id = "356mdgtglekdibxpicxgpgd45ila3ntz25hzl7dspwtdg3w7"
+current_cell_id = Context.get_current_cell_id()
+
+user_text =
+  "```main.css\n/* Reset and remove default Kino padding */\n* {\n    box-sizing: border-box;\n}\n\n:root {\n    padding: 0 !important;\n    margin: 0;\n    background: #f0eee6;\n}\n\n/* Main container */\n.buddy-form {\n    display: flex;\n    flex-direction: column-reverse;\n    background: #f0eee6;\n    font-family:\n        -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif;\n}\n\n/* Header area (tabs on left, model selector + hint on right) */\n.form-header {\n    display: flex;\n    align-items: center;\n    justify-content: space-between;\n    gap: 12px;\n    padding: 0px 12px 12px 12px;\n    background: #f0eee6;\n    border-bottom: 1px solid #e5e7eb;\n}\n\n.form-header > :last-child {\n    display: flex;\n    gap: 8px;\n    align-items: center;\n    margin-left: auto;\n}\n\n/* Model dropdown */\n.form-select {\n    padding: 6px 12px;\n    border: 1px solid #d1d5db;\n    border-radius: 6px;\n    font-size: 14px;\n    background: white;\n    cursor: pointer;\n    color: #374151;\n}\n\n.form-select:focus {\n    outline: none;\n    border-color: #3b82f6;\n    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);\n}\n\n/* Shortcut hint */\n.hint {\n    font-size: 20px;\n    color: #9ca3af;\n    font-family: monospace;\n}\n\n/* Tabs container */\n.tabs {\n    display: flex;\n    gap: 2px;\n    background: transparent;\n}\n\n/* Tab buttons */\n.tab {\n    padding: 8px 16px;\n    background: #f0eee6;\n    border: none;\n    border-bottom: 3px solid transparent;\n    border-radius: 0 0 8px 8px;\n    cursor: pointer;\n    font-size: 14px;\n    font-weight: 500;\n    color: #6b7280;\n    transition: all 0.15s ease;\n}\n\n.tab:hover:not(.active) {\n    background: #e5e7eb;\n    color: #374151;\n}\n\n/* Prompt tab - blue accent */\n.tab[data-tab=\"prompt\"] {\n    border-bottom-color: #3b82f6;\n}\n\n.tab.active[data-tab=\"prompt\"] {\n    background: white;\n    color: #1f2937;\n    border-bottom-color: #3b82f6;\n}\n\n/* Code tab - green accent */\n.tab[data-tab=\"code\"] {\n    border-bottom-color: #10b981;\n}\n\n.tab.active[data-tab=\"code\"] {\n    background: #1e1e1e;\n    color: #e5e7eb;\n    border-bottom-color: #10b981;\n}\n\n/* Note tab - amber accent */\n.tab[data-tab=\"note\"] {\n    border-bottom-color: #f59e0b;\n}\n\n.tab.active[data-tab=\"note\"] {\n    background: #fef3c7;\n    color: #92400e;\n    border-bottom-color: #f59e0b;\n}\n```\nshow border-bottom-color in tabs only when hovering or active.  Show me only what to change."
+
+smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
+
+session_ctx =
+  case session_id do
+    nil ->
+      nil
+
+    _ ->
+      case Context.fetch_session(session_id) do
+        {:ok, _node, _session} = ctx -> ctx
+        _ -> nil
+      end
+  end
+
+import Kino.Shorts
+outer = frame()
+body = frame()
+chat_history = Kino.PromptBuddy.get_history(current_cell_id)
+prompt_blank? = String.trim(user_text) == ""
+Kino.Frame.render(outer, Kino.Layout.grid([body]))
+
+unless prompt_blank? do
+  Task.start(fn ->
+    Process.sleep(100)
+
+    if smart_cell_pid do
+      send(smart_cell_pid, {:clear_editor, current_cell_id})
+    end
+  end)
+
+  Kino.PromptBuddy.insert_user_cell(session_id, current_cell_id, user_text, session_ctx)
+
+  system_msg =
+    ReqLLM.Context.system(
+      "You are a patient pair-programming partner using **Polya's method** / **Socratic** style.\nPRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.\n"
+    )
+
+  prompt_msg = ReqLLM.Context.user("--- BEGIN PROMPT ---
+#{user_text}
+--- END PROMPT ---
+")
+
+  precedent_msgs =
+    case Context.get_notebook_from_session(session_ctx) do
+      {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
+      _ -> []
+    end
+
+  history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
+  messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+
+  Task.start(fn ->
+    Kino.PromptBuddy.stream_response_and_update_history(
+      model,
+      messages,
+      body,
+      outer,
+      user_text,
+      chat_history,
+      current_cell_id,
+      n_every,
+      session_id,
+      session_ctx
+    )
+  end)
+end
+
+outer
+````
+
+**User:**
+
+I need now
+
+1. a very thin line as border to root.
+2. padding top to select
+3. make the editor change depending on the tab active
+4.
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+**Next steps:**
+
+1. **Very thin border on :root** - add to CSS
+2. **Padding-top to select** - add to `.form-select`
+3. **Editor theme switching** - needs JS to:
+   * Track active tab state
+   * Send `"tab_changed"` event to backend
+   * Backend updates editor config (language/background)
+
+**Let me start with CSS (1 & 2):**
+
+```css
+/* Add to :root */
+:root {
+    padding: 0 !important;
+    margin: 0;
+    background: #f0eee6;
+    border: 1px solid #d1d5db; /* thin border */
+}
+
+/* Update .form-select */
+.form-select {
+    padding: 8px 12px 6px 12px; /* added top padding */
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    background: white;
+    cursor: pointer;
+    color: #374151;
+}
+```
+
+**Question:**
+
+For #3 (editor theme switching), should I add the click handlers in `init()` that:
+
+* Toggle `.active` class on tabs
+* Push `"tab_changed"` event with tab name to backend
+* Backend then updates editor language/background?
+
+(The backend will need to handle this event and update editor config - that's step 2 of your original plan)
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+yes
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Perfect! Let's add tab switching with backend events.
+
+**Add to `init()` function in `main.js`:**
+
+```js
+export function init(ctx, payload) {
+  ctx.importCSS("main.css");
+  ctx.root.innerHTML = renderForm();
+  ctx.pushEvent("set_session_id", document.baseURI);
+
+  setupModelSelect(ctx, payload);
+  setupTabs(ctx); // Add this line
+
+  ctx.handleEvent("focus_editor", () => {
+    setTimeout(() => {
+      const editor = document.querySelector(
+        ".cell--code.cell--evaluating + .cell--code textarea, .cell--code textarea",
+      );
+      if (editor) {
+        editor.focus();
+      }
+    }, 100);
+  });
+}
+
+// Add this new function:
+function setupTabs(ctx) {
+  const tabs = ctx.root.querySelectorAll(".tab");
+  
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      // Remove active from all tabs
+      tabs.forEach((t) => t.classList.remove("active"));
+      
+      // Add active to clicked tab
+      tab.classList.add("active");
+      
+      // Get tab name and send to backend
+      const tabName = tab.dataset.tab;
+      ctx.pushEvent("tab_changed", { tab: tabName });
+    });
+  });
+}
+```
+
+**Question:**
+
+Should I also hide/show the `.controls` (model select + hint) based on active tab in JS, or let the backend handle that via payload updates?
+
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQuNSIsIm5fZXZlcnkiOjI0LCJzZXNzaW9uX2lkIjoiMzU2bWRndGdsZWtkaWJ4cGljeGdwZ2Q0NWlsYTNudHoyNWh6bDdkc3B3dGRnM3c3Iiwic291cmNlIjoiIn0","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+
+```elixir
+alias Kino.PromptBuddy.Context
+model = "openrouter:anthropic/claude-sonnet-4.5"
+n_every = 24
+session_id = "356mdgtglekdibxpicxgpgd45ila3ntz25hzl7dspwtdg3w7"
+current_cell_id = Context.get_current_cell_id()
+user_text = ""
+smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
+
+session_ctx =
+  case session_id do
+    nil ->
+      nil
+
+    _ ->
+      case Context.fetch_session(session_id) do
+        {:ok, _node, _session} = ctx -> ctx
+        _ -> nil
+      end
+  end
+
+import Kino.Shorts
+outer = frame()
+body = frame()
+chat_history = Kino.PromptBuddy.get_history(current_cell_id)
+prompt_blank? = String.trim(user_text) == ""
+Kino.Frame.render(outer, Kino.Layout.grid([body]))
+
+unless prompt_blank? do
+  Task.start(fn ->
+    Process.sleep(100)
+
+    if smart_cell_pid do
+      send(smart_cell_pid, {:clear_editor, current_cell_id})
+    end
+  end)
+
+  Kino.PromptBuddy.insert_user_cell(session_id, current_cell_id, user_text, session_ctx)
+
+  system_msg =
+    ReqLLM.Context.system(
+      "You are a patient pair-programming partner using **Polya's method** / **Socratic** style.\nPRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.\n"
+    )
+
+  prompt_msg = ReqLLM.Context.user("--- BEGIN PROMPT ---
+#{user_text}
+--- END PROMPT ---
+")
+
+  precedent_msgs =
+    case Context.get_notebook_from_session(session_ctx) do
+      {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
+      _ -> []
+    end
+
+  history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
+  messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+
+  Task.start(fn ->
+    Kino.PromptBuddy.stream_response_and_update_history(
+      model,
+      messages,
+      body,
+      outer,
+      user_text,
+      chat_history,
+      current_cell_id,
+      n_every,
+      session_id,
+      session_ctx
+    )
+  end)
+end
+
+outer
+```
+
+**User:**
+
+when I click another tab, there is an error.
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+I need to see the error message to help! **What does the error say?**
+
+Possible issues:
+
+1. **Backend doesn't handle `"tab_changed"` event** - Need to add handler in Elixir
+2. **Payload structure mismatch**
+3. **Missing tab data**
+
+**Can you share:**
+
+* The error from browser console (F12)?
+* Or the Elixir/LiveView error?
+
+In the meantime, let me add a safeguard:
+
+```js
+function setupTabs(ctx) {
+  const tabs = ctx.root.querySelectorAll(".tab");
+  
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      // Remove active from all tabs
+      tabs.forEach((t) => t.classList.remove("active"));
+      
+      // Add active to clicked tab
+      tab.classList.add("active");
+      
+      // Get tab name and send to backend
+      const tabName = tab.dataset.tab;
+      if (tabName) {
+        ctx.pushEvent("tab_changed", { tab: tabName });
+      }
+    });
+  });
+}
+```
+
+**What's the exact error message?**
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+09:09:26.866 [debug] Finch streaming completed successfully
+
+09:09:26.898 [debug] HTTP task completed with result: :ok
+
+09:09:26.898 [debug] HTTP task #PID<0.6409.0> exited: :normal
+
+09:09:26.898 [debug] HTTP task #PID<0.6409.0> terminated: :normal
+
+09:09:26.898 [debug] HTTP task #PID<0.6409.0> terminated: :normal
+
+09:09:58.062 [error] GenServer #PID<0.6368.0> terminating
+** (FunctionClauseError) no function clause matching in Kino.PromptBuddy.handle_event/3
+
+```
+(kino_promptbuddy 0.0.1) lib/kino_promptbuddy.ex:75: Kino.PromptBuddy.handle_event("tab_changed", %{"tab" => "note"}, %Kino.JS.Live.Context{assigns: %{source: "", session_id: "356mdgtglekdibxpicxgpgd45ila3ntz25hzl7dspwtdg3w7", model: "openrouter:anthropic/claude-sonnet-4.5", cell_id: "nofile", n_every: 24}, origin: "syc3lucxemicfh4c", __private__: %{ref: "i4iqmscxiiufdat3", client_ids_with_pid: %{"syc3lucxemicfh4c" => #PID<13576.49097.0>}, monitors_with_client_id: %{#Reference<0.1516874062.1334837254.93257> => "syc3lucxemicfh4c"}, smart_cell: %{editor?: true}}})
+(kino 0.17.0) lib/kino/js/live/server.ex:116: Kino.JS.Live.Server.call_handle_info/3
+(kino 0.17.0) lib/kino/smart_cell/server.ex:187: Kino.SmartCell.Server.handle_info/2
+(stdlib 6.2.2) gen_server.erl:2345: :gen_server.try_handle_info/3
+(stdlib 6.2.2) gen_server.erl:2433: :gen_server.handle_msg/6
+(stdlib 6.2.2) proc_lib.erl:329: :proc_lib.init_p_do_apply/3
+```
+
+Last message: {:event, "tab_changed", %{"tab" => "note"}, %{origin: "syc3lucxemicfh4c", ref: "i4iqmscxiiufdat3"}}
+State: %{module: Kino.PromptBuddy, attrs: %{"cell_id" => "nofile", "model" => "openrouter:anthropic/claude-sonnet-4.5", "n_every" => 24, "session_id" => "356mdgtglekdibxpicxgpgd45ila3ntz25hzl7dspwtdg3w7", "source" => ""}, target_pid: #PID<13576.48560.0>, ctx: %Kino.JS.Live.Context{assigns: %{source: "", session_id: "356mdgtglekdibxpicxgpgd45ila3ntz25hzl7dspwtdg3w7", model: "openrouter:anthropic/claude-sonnet-4.5", cell_id: "nofile", n_every: 24}, origin: nil, __private__: %{ref: "i4iqmscxiiufdat3", client_ids_with_pid: %{"syc3lucxemicfh4c" => #PID<13576.49097.0>}, monitors_with_client_id: %{#Reference<0.1516874062.1334837254.93257> => "syc3lucxemicfh4c"}, smart_cell: %{editor?: true}}}, reevaluate_on_change: false, editor_source_attr: nil}
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Perfect! The error is clear: **missing `handle_event/3` clause for `"tab_changed"`**.
+
+You need to add this handler to your Elixir backend (`lib/kino_promptbuddy.ex`):
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+@impl true
+def handle_event("tab_changed", %{"tab" => tab}, ctx) do
+  {:noreply, assign(ctx, active_tab: tab)}
+end
+```
+
+**Question:**
+
+Where in your `kino_promptbuddy.ex` file should I add this? (Can you show me the existing `handle_event/3` functions so I know where to place it?)
+
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQuNSIsIm5fZXZlcnkiOjI0LCJzZXNzaW9uX2lkIjoiMzU2bWRndGdsZWtkaWJ4cGljeGdwZ2Q0NWlsYTNudHoyNWh6bDdkc3B3dGRnM3c3Iiwic291cmNlIjoiIn0","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+
+```elixir
+alias Kino.PromptBuddy.Context
+model = "openrouter:anthropic/claude-sonnet-4.5"
+n_every = 24
+session_id = "356mdgtglekdibxpicxgpgd45ila3ntz25hzl7dspwtdg3w7"
+current_cell_id = Context.get_current_cell_id()
+user_text = ""
+smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
+
+session_ctx =
+  case session_id do
+    nil ->
+      nil
+
+    _ ->
+      case Context.fetch_session(session_id) do
+        {:ok, _node, _session} = ctx -> ctx
+        _ -> nil
+      end
+  end
+
+import Kino.Shorts
+outer = frame()
+body = frame()
+chat_history = Kino.PromptBuddy.get_history(current_cell_id)
+prompt_blank? = String.trim(user_text) == ""
+Kino.Frame.render(outer, Kino.Layout.grid([body]))
+
+unless prompt_blank? do
+  Task.start(fn ->
+    Process.sleep(100)
+
+    if smart_cell_pid do
+      send(smart_cell_pid, {:clear_editor, current_cell_id})
+    end
+  end)
+
+  Kino.PromptBuddy.insert_user_cell(session_id, current_cell_id, user_text, session_ctx)
+
+  system_msg =
+    ReqLLM.Context.system(
+      "You are a patient pair-programming partner using **Polya's method** / **Socratic** style.\nPRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.\n"
+    )
+
+  prompt_msg = ReqLLM.Context.user("--- BEGIN PROMPT ---
+#{user_text}
+--- END PROMPT ---
+")
+
+  precedent_msgs =
+    case Context.get_notebook_from_session(session_ctx) do
+      {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
+      _ -> []
+    end
+
+  history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
+  messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+
+  Task.start(fn ->
+    Kino.PromptBuddy.stream_response_and_update_history(
+      model,
+      messages,
+      body,
+      outer,
+      user_text,
+      chat_history,
+      current_cell_id,
+      n_every,
+      session_id,
+      session_ctx
+    )
+  end)
+end
+
+outer
+```
+
+**User:**
+
+Now that we are changing the tabs with different background colors, can we change the editor background color to match the tab background color?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+Perfect! To change the editor background, we need to:
+
+1. **Send tab color info to backend**
+2. **Update editor theme dynamically**
+
+But first - **can you share your current `kino_promptbuddy.ex` file?** I need to see:
+
+* Where to add the `handle_event("tab_changed", ...)` handler
+* How you currently configure the editor (`:editor` attribute)
+* The structure of `init/2` and existing `handle_event/3` clauses
+
+**In the meantime, here's the approach:**
+
+The editor background is controlled by **Monaco editor theme**. We'll need to:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+# In handle_event("tab_changed", %{"tab" => tab}, ctx):
+def handle_event("tab_changed", %{"tab" => tab}, ctx) do
+  # Map tab to editor attributes
+  editor_attrs = case tab do
+    "prompt" -> %{language: "markdown", theme: "vs"}           # white bg
+    "code"   -> %{language: "elixir", theme: "vs-dark"}       # dark bg  
+    "note"   -> %{language: "markdown", theme: "custom-note"} # beige bg
+  end
+  
+  ctx = assign(ctx, active_tab: tab, editor_attrs: editor_attrs)
+  broadcast_event(ctx, "update_editor", editor_attrs)
+  {:noreply, ctx}
+end
+```
+
+Then in JS, handle the `"update_editor"` event to reconfigure Monaco.
+
+**Question:** Can you share the `kino_promptbuddy.ex` file? That'll let me give you the exact code placement.
+
+<!-- livebook:{"break_markdown":true} -->
+
+**User:**
+
+how to change update_editor?
+
+<!-- livebook:{"break_markdown":true} -->
+
+**Buddy:**
+
+The editor is controlled by **Kino's built-in smart cell editor** - we can't directly change Monaco's theme via events.
+
+**Instead, we need to:**
+
+1. **Update the `:editor` attribute in `to_attrs/1`**
+2. **Kino will automatically recreate the editor** with new settings
+
+**Update your `handle_event/3`:**
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+@impl true
+def handle_event("tab_changed", %{"tab" => tab}, ctx) do
+  # Store active tab in assigns
+  ctx = assign(ctx, active_tab: tab)
+  
+  # Broadcast to update attrs (triggers to_attrs/1)
+  broadcast_event(ctx, "update_attrs", %{})
+  
+  {:noreply, ctx}
+end
+```
+
+**Then update `to_attrs/1` to set editor theme based on active tab:**
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+@impl true
+def to_attrs(ctx) do
+  editor = case ctx.assigns[:active_tab] || "prompt" do
+    "prompt" -> [language: "markdown", theme: "vs"]
+    "code"   -> [language: "elixir", theme: "vs-dark"]  
+    "note"   -> [language: "markdown", theme: "vs"]
+  end
+  
+  %{
+    "source" => ctx.assigns.source,
+    "model" => ctx.assigns.model,
+    "editor" => editor  # Add this
+  }
+end
+```
+
+**Question:**
+
+Can you show me your current `to_attrs/1` function so I can give you the exact code to add?
+
+<!-- livebook:{"attrs":"eyJjZWxsX2lkIjoibm9maWxlIiwibW9kZWwiOiJvcGVucm91dGVyOmFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQuNSIsIm5fZXZlcnkiOjI0LCJzZXNzaW9uX2lkIjoiMzU2bWRndGdsZWtkaWJ4cGljeGdwZ2Q0NWlsYTNudHoyNWh6bDdkc3B3dGRnM3c3Iiwic291cmNlIjoiIn0","chunks":null,"kind":"Elixir.Kino.PromptBuddy","livebook_object":"smart_cell"} -->
+
+```elixir
+alias Kino.PromptBuddy.Context
+model = "openrouter:anthropic/claude-sonnet-4.5"
+n_every = 24
+session_id = "356mdgtglekdibxpicxgpgd45ila3ntz25hzl7dspwtdg3w7"
+current_cell_id = Context.get_current_cell_id()
+user_text = ""
+smart_cell_pid = Process.whereis(:"promptbuddy_#{"nofile"}")
+
+session_ctx =
+  case session_id do
+    nil ->
+      nil
+
+    _ ->
+      case Context.fetch_session(session_id) do
+        {:ok, _node, _session} = ctx -> ctx
+        _ -> nil
+      end
+  end
+
+import Kino.Shorts
+outer = frame()
+body = frame()
+chat_history = Kino.PromptBuddy.get_history(current_cell_id)
+prompt_blank? = String.trim(user_text) == ""
+Kino.Frame.render(outer, Kino.Layout.grid([body]))
+
+unless prompt_blank? do
+  Task.start(fn ->
+    Process.sleep(100)
+
+    if smart_cell_pid do
+      send(smart_cell_pid, {:clear_editor, current_cell_id})
+    end
+  end)
+
+  Kino.PromptBuddy.insert_user_cell(session_id, current_cell_id, user_text, session_ctx)
+
+  system_msg =
+    ReqLLM.Context.system(
+      "You are a patient pair-programming partner using **Polya's method** / **Socratic** style.\nPRIORITY: (1) Answer only the final PROMPT, (2) be brief, (3) one code fence if needed.\n"
+    )
+
+  prompt_msg = ReqLLM.Context.user("--- BEGIN PROMPT ---
+#{user_text}
+--- END PROMPT ---
+")
+
+  precedent_msgs =
+    case Context.get_notebook_from_session(session_ctx) do
+      {:ok, nb} -> Context.build_precedent_messages(nb, current_cell_id)
+      _ -> []
+    end
+
+  history_msgs = Kino.PromptBuddy.history_to_messages(chat_history)
+  messages = [system_msg] ++ precedent_msgs ++ history_msgs ++ [prompt_msg]
+
+  Task.start(fn ->
+    Kino.PromptBuddy.stream_response_and_update_history(
+      model,
+      messages,
+      body,
+      outer,
+      user_text,
+      chat_history,
+      current_cell_id,
+      n_every,
+      session_id,
+      session_ctx
+    )
+  end)
+end
+
+outer
+```
+
+<!-- livebook:{"offset":49144,"stamp":{"token":"XCP.RVqCkfBbrfqRlreaFq3IMytJLhWTHU13rM1x50KoB9KtP6cUIBg7rxvxLiI27cvR5lpqQCd0yT43hPHAG9DYwfyS0mpei80Amt3H5ocmzKQYD5MrdaUuJDQ_6C9o","version":2}} -->

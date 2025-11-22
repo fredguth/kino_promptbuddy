@@ -1,0 +1,21 @@
+# Improving PromptBuddy - fork
+
+```elixir
+Mix.install([
+  {:kino_promptbuddy, path: Path.join(__DIR__, "..")},
+  {:kino, "~>0.17.0"},
+  {:mix_install_watcher, "~> 0.1.0"}
+])
+```
+
+## Plan
+
+1. Add JS-side tab UI (Prompt/Note/Code) plus events so the backend can track tab state.
+2. Extend `Kino.PromptBuddy` assigns/storage to keep per-tab text and the active tab (`init`, `handle_event`, `to_attrs`).
+3. Update `handle_editor_change` and editor config to switch language/source per tab.
+4. Adjust `to_source/1` so only Prompt text runs through the LLM while Note/Code remain local data.
+5. Insert optional Note/Code cells (markdown/elixir) when running a prompt so those tabs materialize in the notebook.
+
+## Section
+
+<!-- livebook:{"offset":716,"stamp":{"token":"XCP.A9i37d0ys48ZyxmLI1h4ipN8B4Ij8MeB9qn3eyXUoXFvFrlblOoOP8uxCTkD5Tf7NFyx1Hcem-UIAc0KrPgyGWwkqB5nm-n3syDSJhF4MTIQ4Qlg9bj3hHFqFnjm","version":2}} -->
